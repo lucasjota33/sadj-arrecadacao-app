@@ -110,7 +110,7 @@ else:
 
 # --- TELA 1: PAINEL DE LIDERANÇA ---
 if menu == "Painel de Liderança":
-    st.title(f"🏆 Painel de Liderança - {mes_selecionado}")
+    st.title(f"🏆 Arrecadação de alimentos SADJ - {mes_selecionado}")
 
     # Buscar dados das duas coleções
     df_cadetes = buscar_cadetes()
