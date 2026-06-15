@@ -152,11 +152,16 @@ if menu == "Painel de Liderança":
             how="left",
         )
         
-        df_principal[
-            ["kg_arroz", "kg_feijao", "kg_macarrao", "kg_outros", "kg_total"]
-        ] = df_principal[
-            ["kg_arroz", "kg_feijao", "kg_macarrao", "kg_outros", "kg_total"]
-        ].fillna(0.0)
+        # --- CORREÇÃO DO ERRO KeyError ---
+        # Garante que todas as colunas existam, mesmo nos registros antigos do Firebase
+        colunas_pesos = ["kg_arroz", "kg_feijao", "kg_macarrao", "kg_outros", "kg_total"]
+        for col in colunas_pesos:
+            if col not in df_principal.columns:
+                df_principal[col] = 0.0
+
+        # Preenche os valores nulos (quem não doou nada ainda) com zero
+        df_principal[colunas_pesos] = df_principal[colunas_pesos].fillna(0.0)
+        # ---------------------------------
 
         # Meta Individual: Mínimo 7kg no total E 2kg de cada tipo básico
         df_principal["Meta Individual"] = df_principal.apply(
