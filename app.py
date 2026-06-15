@@ -61,7 +61,7 @@ def deletar_cadete(id_cadete):
     db.collection("cadetes").document(id_cadete).delete()
 
 
-def salvar_doacao(id_cadete, mes_ano, arroz, feijao, macarrao, outros):
+def salvar_doacao(id_cadete, mes_ano, arroz, feijao, macarrao):
     """Soma a nova doação aos valores já existentes do cadete no mês específico."""
     doc_id = f"{id_cadete}_{mes_ano}"
     doc_ref = db.collection("arrecadacoes").document(doc_id)
@@ -73,9 +73,8 @@ def salvar_doacao(id_cadete, mes_ano, arroz, feijao, macarrao, outros):
         arroz += dados_atuais.get("kg_arroz", 0.0)
         feijao += dados_atuais.get("kg_feijao", 0.0)
         macarrao += dados_atuais.get("kg_macarrao", 0.0)
-        outros += dados_atuais.get("kg_outros", 0.0)
 
-    total = arroz + feijao + macarrao + outros
+    total = arroz + feijao + macarrao
 
     doc_ref.set(
         {
@@ -84,7 +83,6 @@ def salvar_doacao(id_cadete, mes_ano, arroz, feijao, macarrao, outros):
             "kg_arroz": arroz,
             "kg_feijao": feijao,
             "kg_macarrao": macarrao,
-            "kg_outros": outros,
             "kg_total": total,
         }
     )
@@ -138,7 +136,6 @@ if menu == "Painel de Liderança":
                     "kg_arroz",
                     "kg_feijao",
                     "kg_macarrao",
-                    "kg_outros",
                     "kg_total",
                 ]
             )
@@ -153,7 +150,7 @@ if menu == "Painel de Liderança":
         
         # --- CORREÇÃO DO ERRO KeyError ---
         # Garante que todas as colunas existam, mesmo nos registros antigos do Firebase
-        colunas_pesos = ["kg_arroz", "kg_feijao", "kg_macarrao", "kg_outros", "kg_total"]
+        colunas_pesos = ["kg_arroz", "kg_feijao", "kg_macarrao", "kg_total"]
         for col in colunas_pesos:
             if col not in df_principal.columns:
                 df_principal[col] = 0.0
@@ -217,7 +214,6 @@ if menu == "Painel de Liderança":
                 "kg_arroz",
                 "kg_feijao",
                 "kg_macarrao",
-                "kg_outros",
                 "kg_total",
                 "Meta Individual",
             ]
@@ -229,7 +225,6 @@ if menu == "Painel de Liderança":
             "Arroz",
             "Feijão",
             "Macarrão",
-            "Outros",
             "Total",
             "Status Meta",
         ]
@@ -274,16 +269,15 @@ elif menu == "Lançar Doação" and is_admin:
                 macarrao = st.number_input("Macarrão (kg):", min_value=0.0, step=0.5, format="%.2f")
             with col2:
                 feijao = st.number_input("Feijão (kg):", min_value=0.0, step=0.5, format="%.2f")
-                outros = st.number_input("Outros Alimentos (kg):", min_value=0.0, step=0.5, format="%.2f")
 
             enviar_doacao = st.form_submit_button("Somar Pesagem")
 
             if enviar_doacao:
                 # Verifica se a soma total lançada não é zero
-                if arroz + feijao + macarrao + outros == 0:
+                if arroz + feijao + macarrao == 0:
                     st.warning("Insira um valor maior que zero para registrar a doação.")
                 else:
-                    salvar_doacao(id_cadete, mes_doacao, arroz, feijao, macarrao, outros)
+                    salvar_doacao(id_cadete, mes_doacao, arroz, feijao, macarrao)
                     st.success(
                         f"Sucesso! Dados adicionados para {cadete_selecionado.split('(')[0].strip()} no mês de {mes_doacao}."
                     )
