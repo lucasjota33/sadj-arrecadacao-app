@@ -4,7 +4,7 @@ from firebase_admin import credentials, firestore
 import pandas as pd
 
 # 1. CONFIGURAÇÃO DA PÁGINA
-st.set_page_config(page_title="Campanha de Arrecadação - SADJ", layout="wide")
+st.set_page_config(page_title="Campanha de Arrecadação - SADJ",page_icon ="logo.png", layout="wide")
 
 # 2. INICIALIZAÇÃO DO FIREBASE (FIRESTORE)
 if not firebase_admin._apps:
