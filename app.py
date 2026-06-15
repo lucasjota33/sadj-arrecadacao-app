@@ -80,7 +80,7 @@ def salvar_doacao(id_cadete, mes_ano, arroz, feijao, macarrao):
 
 # 4. CONTROLE DE ACESSO (AUTENTICAÇÃO)
 st.sidebar.header("🔑 Área Administrativa")
-senha_input = st.sidebar.text_input("Digite a senha master:", type="password")
+senha_input = st.sidebar.text_input("Digite a senha:", type="password")
 
 # Define a senha padrão (pode ser alterada via st.secrets para maior segurança)
 SENHA_ADMIN = st.secrets.get("admin_password", "SADJ2026")
