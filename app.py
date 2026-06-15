@@ -89,6 +89,7 @@ def salvar_doacao(id_cadete, mes_ano, arroz, feijao, macarrao):
 
 
 # 4. CONTROLE DE ACESSO (AUTENTICAÇÃO)
+st.sidebar.image("logo.png", use_container_width=True)
 st.sidebar.header("🔑 Área Administrativa")
 senha_input = st.sidebar.text_input("Digite a senha:", type="password")
 
