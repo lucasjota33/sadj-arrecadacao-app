@@ -45,14 +45,13 @@ def buscar_arrecadacoes(mes_ano):
     return pd.DataFrame(lista_arrecadacoes)
 
 
-def salvar_cadete(nome, turma, companhia, pelotao):
+def salvar_cadete(nome, turma, pelotao):
     """Salva um novo cadete no banco."""
     doc_ref = db.collection("cadetes").document()
     doc_ref.set(
         {
             "nome": nome,
             "turma": turma,
-            "companhia": companhia,
             "pelotao": pelotao,
         }
     )
@@ -194,22 +193,17 @@ if menu == "Painel de Liderança":
 
         st.markdown("---")
         st.subheader("🔍 Filtrar Rankings")
-        col_f1, col_f2, col_f3 = st.columns(3)
+        col_f1, col_f2 = st.columns(2)
         with col_f1:
             turmas = ["Todas"] + sorted(df_principal["turma"].unique().tolist())
             filtro_turma = st.selectbox("Filtrar por Turma:", turmas)
         with col_f2:
-            cias = ["Todas"] + sorted(df_principal["companhia"].unique().tolist())
-            filtro_cia = st.selectbox("Filtrar por Companhia:", cias)
-        with col_f3:
             pelotoes = ["Todos"] + sorted(df_principal["pelotao"].unique().tolist())
             filtro_pelotao = st.selectbox("Filtrar por Pelotão:", pelotoes)
 
         df_filtrado = df_principal.copy()
         if filtro_turma != "Todas":
             df_filtrado = df_filtrado[df_filtrado["turma"] == filtro_turma]
-        if filtro_cia != "Todas":
-            df_filtrado = df_filtrado[df_filtrado["companhia"] == filtro_cia]
         if filtro_pelotao != "Todos":
             df_filtrado = df_filtrado[df_filtrado["pelotao"] == filtro_pelotao]
 
@@ -219,7 +213,6 @@ if menu == "Painel de Liderança":
             [
                 "nome",
                 "turma",
-                "companhia",
                 "pelotao",
                 "kg_arroz",
                 "kg_feijao",
@@ -232,7 +225,6 @@ if menu == "Painel de Liderança":
         df_exibicao.columns = [
             "Nome do Cadete",
             "Turma",
-            "Cia",
             "Pelotão",
             "Arroz",
             "Feijão",
@@ -306,12 +298,10 @@ elif menu == "Gerenciar Cadetes" and is_admin:
         with st.form("form_cadastro_cadete", clear_on_submit=True):
             nome_guerra = st.text_input("Nome de Guerra / Nome Completo:").strip()
 
-            col_c1, col_c2, col_c3 = st.columns(3)
+            col_c1, col_c2 = st.columns(2)
             with col_c1:
                 turma = st.selectbox("Turma (Ano):", ["1º Ano", "2º Ano", "3º Ano", "4º Ano"])
             with col_c2:
-                companhia = st.selectbox("Companhia:", ["1ª Cia", "2ª Cia", "3ª Cia", "4ª Cia"])
-            with col_c3:
                 pelotao = st.selectbox(
                     "Pelotão:", 
                     ["1º Pel", "2º Pel", "3º Pel", "4º Pel", "5º Pel", "6º Pel", "7º Pel", "8º Pel"]
@@ -323,7 +313,7 @@ elif menu == "Gerenciar Cadetes" and is_admin:
                 if nome_guerra == "":
                     st.error("O campo de nome não pode ficar em branco.")
                 else:
-                    salvar_cadete(nome_guerra, turma, companhia, pelotao)
+                    salvar_cadete(nome_guerra, turma, pelotao)
                     st.success(f"Cadete '{nome_guerra}' cadastrado com sucesso!")
 
     with tab2:
