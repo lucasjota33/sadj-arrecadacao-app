@@ -1,29 +1,33 @@
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore
+from google.cloud.firestore_v1 import Increment
 import pandas as pd
 
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Campanha de Arrecadação - SADJ", page_icon="logo.png", layout="wide")
 
-# 2. INICIALIZAÇÃO DO FIREBASE (FIRESTORE)
-if not firebase_admin._apps:
-    try:
+# 2. INICIALIZAÇÃO DO FIREBASE (FIRESTORE) - cacheado como recurso singleton
+@st.cache_resource
+def get_db():
+    if not firebase_admin._apps:
         firebase_creds = dict(st.secrets["textkey"])
         cred = credentials.Certificate(firebase_creds)
         firebase_admin.initialize_app(cred)
-    except Exception as e:
-        st.error(
-            "Erro ao conectar ao Banco de Dados. Verifique os Secrets do Streamlit."
-        )
-        st.stop()
+    return firestore.client()
 
-db = firestore.client()
+try:
+    db = get_db()
+except Exception:
+    st.error("Erro ao conectar ao Banco de Dados. Verifique os Secrets do Streamlit.")
+    st.stop()
 
 
-# 3. FUNÇÕES DE BANCO DE DADOS
+# 3. FUNÇÕES DE BANCO DE DADOS (com cache para reduzir leituras no Firestore)
+
+@st.cache_data(ttl=120, show_spinner=False)
 def buscar_cadetes():
-    """Retorna um DataFrame com todos os cadetes cadastrados."""
+    """Retorna um DataFrame com todos os cadetes cadastrados. Cache de 2 min."""
     docs = db.collection("cadetes").stream()
     lista_cadetes = []
     for doc in docs:
@@ -33,8 +37,9 @@ def buscar_cadetes():
     return pd.DataFrame(lista_cadetes)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def buscar_arrecadacoes(mes_ano):
-    """Retorna um DataFrame com as arrecadações do mês selecionado."""
+    """Retorna um DataFrame com as arrecadações do mês selecionado. Cache de 1 min."""
     docs = (
         db.collection("arrecadacoes").where("mes_ano", "==", mes_ano).stream()
     )
@@ -55,37 +60,36 @@ def salvar_cadete(nome, turma, pelotao):
             "pelotao": pelotao,
         }
     )
+    # Invalida caches afetados
+    buscar_cadetes.clear()
+
 
 def deletar_cadete(id_cadete):
     """Remove um cadete do banco de dados."""
     db.collection("cadetes").document(id_cadete).delete()
+    buscar_cadetes.clear()
 
 
 def salvar_doacao(id_cadete, mes_ano, arroz, feijao, macarrao):
-    """Soma a nova doação aos valores já existentes do cadete no mês específico."""
+    """Soma a nova doação de forma atômica via Increment, evitando race conditions
+    quando múltiplos usuários lançam doações ao mesmo tempo."""
     doc_id = f"{id_cadete}_{mes_ano}"
     doc_ref = db.collection("arrecadacoes").document(doc_id)
-    
-    # Busca se o documento já existe para fazer a soma cumulativa
-    doc = doc_ref.get()
-    if doc.exists:
-        dados_atuais = doc.to_dict()
-        arroz += dados_atuais.get("kg_arroz", 0.0)
-        feijao += dados_atuais.get("kg_feijao", 0.0)
-        macarrao += dados_atuais.get("kg_macarrao", 0.0)
-
     total = arroz + feijao + macarrao
 
     doc_ref.set(
         {
             "id_cadete": id_cadete,
             "mes_ano": mes_ano,
-            "kg_arroz": arroz,
-            "kg_feijao": feijao,
-            "kg_macarrao": macarrao,
-            "kg_total": total,
-        }
+            "kg_arroz": Increment(arroz),
+            "kg_feijao": Increment(feijao),
+            "kg_macarrao": Increment(macarrao),
+            "kg_total": Increment(total),
+        },
+        merge=True,
     )
+    # Invalida cache do mês afetado
+    buscar_arrecadacoes.clear()
 
 
 # 4. CONTROLE DE ACESSO (AUTENTICAÇÃO)
@@ -106,15 +110,21 @@ elif senha_input != "":
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Consulta de Resultados")
 meses_disponiveis = [
-    "Junho 2026", 
-    "Julho 2026", 
-    "Agosto 2026", 
-    "Setembro 2026", 
-    "Outubro 2026", 
-    "Novembro 2026", 
-    "Dezembro 2026"
+    "Junho 2026",
+    "Julho 2026",
+    "Agosto 2026",
+    "Setembro 2026",
+    "Outubro 2026",
+    "Novembro 2026",
+    "Dezembro 2026",
 ]
 mes_selecionado = st.sidebar.selectbox("Visualizar dados do mês:", meses_disponiveis)
+
+# Botão manual para forçar atualização dos dados (limpa o cache)
+if st.sidebar.button("🔄 Atualizar dados agora"):
+    buscar_cadetes.clear()
+    buscar_arrecadacoes.clear()
+    st.rerun()
 
 # Navegação do App
 if is_admin:
@@ -156,7 +166,7 @@ if menu == "Painel de Liderança":
             right_on="id_cadete",
             how="left",
         )
-        
+
         # --- CORREÇÃO DO ERRO KeyError ---
         # Garante que todas as colunas existam, mesmo nos registros antigos do Firebase
         colunas_pesos = ["kg_arroz", "kg_feijao", "kg_macarrao", "kg_total"]
@@ -168,18 +178,14 @@ if menu == "Painel de Liderança":
         df_principal[colunas_pesos] = df_principal[colunas_pesos].fillna(0.0)
         # ---------------------------------
 
-        # Meta Individual: Mínimo 7kg no total E 2kg de cada tipo básico
-        df_principal["Meta Individual"] = df_principal.apply(
-            lambda r: "Cumprida"
-            if (
-                r["kg_total"] >= 7.0
-                and r["kg_arroz"] >= 2.0
-                and r["kg_feijao"] >= 2.0
-                and r["kg_macarrao"] >= 2.0
-            )
-            else "Pendente",
-            axis=1,
+        # Meta Individual: Mínimo 7kg no total E 2kg de cada tipo básico (vetorizado)
+        cumpriu = (
+            (df_principal["kg_total"] >= 7.0)
+            & (df_principal["kg_arroz"] >= 2.0)
+            & (df_principal["kg_feijao"] >= 2.0)
+            & (df_principal["kg_macarrao"] >= 2.0)
         )
+        df_principal["Meta Individual"] = cumpriu.map({True: "Cumprida", False: "Pendente"})
 
         total_geral_cfo = df_principal["kg_total"].sum()
         meta_cfo = 800.0
@@ -207,7 +213,7 @@ if menu == "Painel de Liderança":
             pelotoes = ["Todos"] + sorted(df_principal["pelotao"].unique().tolist())
             filtro_pelotao = st.selectbox("Filtrar por Pelotão:", pelotoes)
 
-        df_filtrado = df_principal.copy()
+        df_filtrado = df_principal
         if filtro_turma != "Todas":
             df_filtrado = df_filtrado[df_filtrado["turma"] == filtro_turma]
         if filtro_pelotao != "Todos":
@@ -226,7 +232,7 @@ if menu == "Painel de Liderança":
                 "kg_total",
                 "Meta Individual",
             ]
-        ].copy()
+        ]
         df_exibicao.columns = [
             "Nome do Cadete",
             "Turma",
@@ -260,13 +266,14 @@ elif menu == "Lançar Doação" and is_admin:
     if df_cadetes.empty:
         st.error("Não há cadetes cadastrados. Vá na aba 'Gerenciar Cadetes' primeiro.")
     else:
+        df_cadetes = df_cadetes.copy()
         df_cadetes["selecao"] = (
             df_cadetes["nome"] + " (" + df_cadetes["turma"] + " - " + df_cadetes["pelotao"] + ")"
         )
 
         with st.form("form_registro_alimento"):
             cadete_selecionado = st.selectbox("Selecione o Cadete:", df_cadetes["selecao"].tolist())
-            
+
             # Seletor de mês independente para o formulário
             mes_doacao = st.selectbox("Mês de Referência da Doação:", meses_disponiveis)
 
@@ -306,8 +313,8 @@ elif menu == "Gerenciar Cadetes" and is_admin:
                 turma = st.selectbox("Turma (Ano):", ["1º Ano", "2º Ano", "3º Ano", "4º Ano"])
             with col_c2:
                 pelotao = st.selectbox(
-                    "Pelotão:", 
-                    ["1º Pel", "2º Pel", "3º Pel", "4º Pel", "5º Pel", "6º Pel", "7º Pel", "8º Pel"]
+                    "Pelotão:",
+                    ["1º Pel", "2º Pel", "3º Pel", "4º Pel", "5º Pel", "6º Pel", "7º Pel", "8º Pel"],
                 )
 
             enviar_cadete = st.form_submit_button("Cadastrar Cadete")
@@ -324,16 +331,17 @@ elif menu == "Gerenciar Cadetes" and is_admin:
         if df_cadetes_remover.empty:
             st.info("Não há cadetes cadastrados para remover.")
         else:
+            df_cadetes_remover = df_cadetes_remover.copy()
             df_cadetes_remover["selecao"] = (
                 df_cadetes_remover["nome"] + " (" + df_cadetes_remover["turma"] + ")"
             )
-            
+
             with st.form("form_remover_cadete"):
                 cadete_remover = st.selectbox(
-                    "Selecione o Cadete que deseja excluir:", 
-                    df_cadetes_remover["selecao"].tolist()
+                    "Selecione o Cadete que deseja excluir:",
+                    df_cadetes_remover["selecao"].tolist(),
                 )
-                
+
                 id_cadete_remover = df_cadetes_remover[
                     df_cadetes_remover["selecao"] == cadete_remover
                 ]["id"].values[0]
