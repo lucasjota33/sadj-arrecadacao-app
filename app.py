@@ -162,7 +162,7 @@ if menu == "Painel de Liderança":
 
         # Meta Individual: Mínimo 7kg no total E 2kg de cada tipo básico
         df_principal["Meta Individual"] = df_principal.apply(
-            lambda r: "Cumprida (1 Folga)"
+            lambda r: "Cumprida"
             if (
                 r["kg_total"] >= 7.0
                 and r["kg_arroz"] >= 2.0
