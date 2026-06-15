@@ -4,7 +4,7 @@ from firebase_admin import credentials, firestore
 import pandas as pd
 
 # 1. CONFIGURAÇÃO DA PÁGINA
-st.set_page_config(page_title="Campanha de Arrecadação - SADJ",page_icon ="logo.png", layout="wide")
+st.set_page_config(page_title="Campanha de Arrecadação - SADJ", page_icon="logo.png", layout="wide")
 
 # 2. INICIALIZAÇÃO DO FIREBASE (FIRESTORE)
 if not firebase_admin._apps:
@@ -105,7 +105,15 @@ elif senha_input != "":
 # Seleção do Mês de Referência (Global para visualização)
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Consulta de Resultados")
-meses_disponiveis = ["Junho 2026", "Julho 2026", "Agosto 2026"]
+meses_disponiveis = [
+    "Junho 2026", 
+    "Julho 2026", 
+    "Agosto 2026", 
+    "Setembro 2026", 
+    "Outubro 2026", 
+    "Novembro 2026", 
+    "Dezembro 2026"
+]
 mes_selecionado = st.sidebar.selectbox("Visualizar dados do mês:", meses_disponiveis)
 
 # Navegação do App
