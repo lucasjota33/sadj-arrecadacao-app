@@ -23,6 +23,12 @@ st.set_page_config(
 if "cadete_logado" not in st.session_state:
     st.session_state.cadete_logado = None
 
+if "login_tentativas" not in st.session_state:
+    st.session_state.login_tentativas = {}
+
+if "df_cadetes_cache" not in st.session_state:
+    st.session_state.df_cadetes_cache = None
+
 # ─────────────────────────────────────────────
 # CSS — ESTILO PAINEL CLARO
 # ─────────────────────────────────────────────
@@ -370,16 +376,31 @@ def salvar_cadete(nome, turma, pelotao, senha=None):
     buscar_cadetes.clear()
 
 def deletar_cadete(id_cadete):
-    # 1. Deletar cadete
-    db.collection("cadetes").document(id_cadete).delete()
-    
-    # 2. Buscar e deletar folgas associadas ao cadete
-    folgas_docs = db.collection("folgas").where("id_cadete", "==", id_cadete).stream()
-    for doc in folgas_docs:
-        db.collection("folgas").document(doc.id).delete()
+    try:
+        # 1. Deletar cadete
+        db.collection("cadetes").document(id_cadete).delete()
         
-    buscar_cadetes.clear()
-    buscar_folgas.clear()
+        # 2. Deletar folgas associadas
+        folgas_docs = db.collection("folgas").where("id_cadete", "==", id_cadete).stream()
+        for doc in folgas_docs:
+            db.collection("folgas").document(doc.id).delete()
+        
+        # 3. Deletar arrecadacoes associadas
+        arrecadacoes_docs = db.collection("arrecadacoes").where("id_cadete", "==", id_cadete).stream()
+        for doc in arrecadacoes_docs:
+            db.collection("arrecadacoes").document(doc.id).delete()
+        
+        # 4. Deletar historico associado
+        historico_docs = db.collection("historico").where("id_cadete", "==", id_cadete).stream()
+        for doc in historico_docs:
+            db.collection("historico").document(doc.id).delete()
+        
+        buscar_cadetes.clear()
+        buscar_folgas.clear()
+        buscar_arrecadacoes.clear()
+        buscar_historico.clear()
+    except Exception as e:
+        st.error(f"Erro ao deletar cadete: {str(e)}")
 
 def atualizar_senha_cadete(id_cadete, senha):
     db.collection("cadetes").document(id_cadete).update({"senha": senha})
@@ -416,9 +437,53 @@ def corrigir_doacao(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao):
     _registrar_historico(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, "correção")
     buscar_arrecadacoes.clear()
 
+def validar_datas_folga(datas_list, mes_gozo):
+    """Valida se as datas são válidas e estão dentro do mês selecionado"""
+    erros = []
+    datas_validas = []
+    meses_map = {"Junho 2026": (6, 2026), "Julho 2026": (7, 2026), "Agosto 2026": (8, 2026),
+                  "Setembro 2026": (9, 2026), "Outubro 2026": (10, 2026), 
+                  "Novembro 2026": (11, 2026), "Dezembro 2026": (12, 2026)}
+    
+    if mes_gozo not in meses_map:
+        return [], ["Mês selecionado inválido."]
+    
+    mes_num, ano = meses_map[mes_gozo]
+    datas_unicas = set()
+    
+    for d in datas_list:
+        if d is None:
+            continue
+        
+        # Validar mês/ano
+        if d.month != mes_num or d.year != ano:
+            erros.append(f"Data {d.strftime('%d/%m/%Y')} não está em {mes_gozo}")
+            continue
+        
+        # Validar duplicatas
+        data_str = d.strftime("%d/%m/%Y")
+        if data_str in datas_unicas:
+            erros.append(f"Data {data_str} está duplicada")
+            continue
+        
+        datas_unicas.add(data_str)
+        datas_validas.append(d)
+    
+    if not datas_validas:
+        erros.append("Nenhuma data válida foi selecionada.")
+    
+    return datas_validas, erros
+
 def salvar_datas_folga(id_cadete, nome_cadete, turma, pelotao, mes_gozo, datas_list):
+    datas_validas, erros = validar_datas_folga(datas_list, mes_gozo)
+    
+    if erros:
+        for erro in erros:
+            st.error(erro)
+        return False
+    
     doc_id = f"{id_cadete}_{mes_gozo}"
-    datas_str = [d.strftime("%d/%m/%Y") for d in datas_list if d is not None]
+    datas_str = [d.strftime("%d/%m/%Y") for d in datas_validas]
     db.collection("folgas").document(doc_id).set({
         "id_cadete": id_cadete,
         "nome": nome_cadete,
@@ -429,21 +494,52 @@ def salvar_datas_folga(id_cadete, nome_cadete, turma, pelotao, mes_gozo, datas_l
         "timestamp": datetime.now(timezone.utc)
     })
     buscar_folgas.clear()
+    return True
 
 
 # ─────────────────────────────────────────────
 # 4. SIDEBAR
 # ─────────────────────────────────────────────
 st.sidebar.image("logo.png", use_container_width=True)
-st.sidebar.header("🔑 Área Administrativa")
+st.sidebar.header("🔑 Autenticação")
+
+# Rate limiting para login
+def verificar_rate_limit(ip_key: str, max_tentativas: int = 5) -> tuple[bool, str]:
+    if ip_key not in st.session_state.login_tentativas:
+        st.session_state.login_tentativas[ip_key] = {"count": 0, "bloqueado_ate": None}
+    
+    info = st.session_state.login_tentativas[ip_key]
+    agora = datetime.now(timezone.utc)
+    
+    if info["bloqueado_ate"] and agora < info["bloqueado_ate"]:
+        tempo_restante = (info["bloqueado_ate"] - agora).seconds
+        return False, f"Muitas tentativas. Tente novamente em {tempo_restante}s"
+    
+    if info["count"] >= max_tentativas:
+        info["bloqueado_ate"] = agora + datetime.timedelta(minutes=2)
+        return False, "Conta bloqueada por 2 minutos. Muitas tentativas incorretas."
+    
+    return True, ""
+
 senha_input = st.sidebar.text_input("Digite a senha:", type="password")
-SENHA_ADMIN = st.secrets.get("admin_password", "SADJ2026")
+SENHA_ADMIN = st.secrets.get("admin_password")
 is_admin = False
-if senha_input == SENHA_ADMIN:
-    is_admin = True
-    st.sidebar.success("Acesso Admin Liberado!")
-elif senha_input != "":
-    st.sidebar.error("Senha Incorreta.")
+
+if not SENHA_ADMIN:
+    st.sidebar.error("Erro de configuração: admin_password não está nos secrets")
+else:
+    if senha_input:
+        pode_tentar, msg_bloqueio = verificar_rate_limit("admin_login")
+        if not pode_tentar:
+            st.sidebar.error(msg_bloqueio)
+        elif senha_input == SENHA_ADMIN:
+            is_admin = True
+            st.session_state.login_tentativas["admin_login"]["count"] = 0
+            st.sidebar.success("Acesso Admin Liberado!")
+        else:
+            st.session_state.login_tentativas["admin_login"]["count"] += 1
+            tentativas_restantes = 5 - st.session_state.login_tentativas["admin_login"]["count"]
+            st.sidebar.error(f"Senha Incorreta. {tentativas_restantes} tentativas restantes.")
 
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Mês de Referência")
@@ -453,24 +549,25 @@ mes_selecionado = st.sidebar.selectbox("Visualizar dados do mês:", meses_dispon
 
 if st.sidebar.button("🔄 Atualizar agora"):
     buscar_cadetes.clear(); buscar_arrecadacoes.clear(); buscar_historico.clear(); buscar_folgas.clear(); buscar_status_mes.clear()
+    st.session_state.df_cadetes_cache = None
     st.rerun()
 
 if is_admin:
-    st.sidebar.markdown("### 📌 Status da Arrecadação")
-    mes_status_selecionado = st.sidebar.selectbox("Mês para controle:", meses_disponiveis, key="mes_status")
-    status_encerrado = buscar_status_mes(mes_status_selecionado)
-    if status_encerrado:
-        st.sidebar.success(f"Arrecadação de {mes_status_selecionado} está encerrada.")
-        if st.sidebar.button("🔄 Retomar arrecadação", key="btn_reabrir"):
-            set_status_mes(mes_status_selecionado, False)
-            buscar_status_mes.clear()
-            st.experimental_rerun()
-    else:
-        st.sidebar.info(f"Arrecadação de {mes_status_selecionado} está aberta.")
-        if st.sidebar.button("✅ Encerrar arrecadação", key="btn_encerrar"):
-            set_status_mes(mes_status_selecionado, True)
-            buscar_status_mes.clear()
-            st.experimental_rerun()
+    with st.sidebar.expander("📌 Status da Arrecadação", expanded=True):
+        mes_status_selecionado = st.selectbox("Mês para controle:", meses_disponiveis, key="mes_status")
+        status_encerrado = buscar_status_mes(mes_status_selecionado)
+        if status_encerrado:
+            st.success(f"Arrecadação de {mes_status_selecionado} está encerrada.")
+            if st.button("🔄 Retomar arrecadação", key="btn_reabrir"):
+                set_status_mes(mes_status_selecionado, False)
+                buscar_status_mes.clear()
+                st.rerun()
+        else:
+            st.info(f"Arrecadação de {mes_status_selecionado} está aberta.")
+            if st.button("✅ Encerrar arrecadação", key="btn_encerrar"):
+                set_status_mes(mes_status_selecionado, True)
+                buscar_status_mes.clear()
+                st.rerun()
 
     menu = st.sidebar.radio("Navegação:",
         ["Painel de Liderança", "Minhas Folgas", "Lançar Doação", "Corrigir Doação", "Relatório de Folgas", "Histórico", "Gerenciar Cadetes"])
@@ -581,7 +678,7 @@ if menu == "Painel de Liderança":
 
     total_geral    = df["kg_total"].sum()
     meta_cfo       = 800.0
-    pct_meta       = min(total_geral / meta_cfo, 1.0)
+    pct_meta       = min(total_geral / meta_cfo, 1.0) if meta_cfo > 0 else 0
     total_cadetes  = len(df)
     metas_ok       = (df["Meta Individual"] == "✅ Cumprida").sum()
     participantes  = (df["kg_total"] > 0).sum()
@@ -620,7 +717,7 @@ if menu == "Painel de Liderança":
             <div class="g-label">Participantes</div>
             <div class="g-value" style="color:#8b5cf6">{participantes}<span style="font-size:1rem;font-weight:400;color:#6b7280"> / {total_cadetes}</span></div>
             {barra_html(pct_part, "#8b5cf6", 7)}
-            <div class="g-sub">{sem_doacao} cadetes ainda sem nenhuma doação</div>
+            <div class="g-sub">{sem_doacao} cadete(s) sem nenhuma doação</div>
         </div>""", unsafe_allow_html=True)
 
     with k4:
@@ -658,13 +755,14 @@ if menu == "Painel de Liderança":
         (f3, "Macarrão", "🍝", total_mac,    "#8b5cf6"),
     ]:
         with col:
+            pct_alimento = (kg / total_geral * 100) if total_geral > 0 else 0
             st.markdown(f"""
             <div class="g-card" style="--accent:{color};min-height:110px">
                 <div class="g-icon">{icon}</div>
                 <div class="g-label">{label}</div>
                 <div class="g-value" style="color:{color};font-size:1.7rem">{kg:.1f}<span style="font-size:0.9rem;font-weight:500;color:#6b7280"> kg</span></div>
                 {barra_html(kg/total_geral if total_geral else 0, color, 5)}
-                <div class="g-sub">{kg/total_geral*100:.1f}% do total arrecadado</div>
+                <div class="g-sub">{pct_alimento:.1f}% do total arrecadado</div>
             </div>""", unsafe_allow_html=True)
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
@@ -860,23 +958,29 @@ if menu == "Painel de Liderança":
 
     with res1:
         st.caption("Por Pelotão")
-        rp = (df.groupby("pelotao").agg(
-            Total=("kg_total","sum"), Participantes=("kg_total", lambda x:(x>0).sum()),
-            Cadetes=("nome","count"), Metas=("Meta Individual", lambda x:(x=="✅ Cumprida").sum())
-        ).reset_index().sort_values("Total", ascending=False))
-        rp.columns = ["Pelotão","Total (kg)","Participantes","Cadetes","Metas Cumpridas"]
-        rp["Total (kg)"] = rp["Total (kg)"].map("{:.2f}".format)
-        st.dataframe(rp, use_container_width=True, hide_index=True)
+        if not df.empty:
+            rp = (df.groupby("pelotao").agg(
+                Total=("kg_total","sum"), Participantes=("kg_total", lambda x:(x>0).sum()),
+                Cadetes=("nome","count"), Metas=("Meta Individual", lambda x:(x=="✅ Cumprida").sum())
+            ).reset_index().sort_values("Total", ascending=False))
+            rp.columns = ["Pelotão","Total (kg)","Participantes","Cadetes","Metas Cumpridas"]
+            rp["Total (kg)"] = rp["Total (kg)"].map("{:.2f}".format)
+            st.dataframe(rp, use_container_width=True, hide_index=True)
+        else:
+            st.info("Sem dados para exibir.")
 
     with res2:
         st.caption("Por Turma")
-        rt = (df.groupby("turma").agg(
-            Total=("kg_total","sum"), Participantes=("kg_total", lambda x:(x>0).sum()),
-            Cadetes=("nome","count"), Metas=("Meta Individual", lambda x:(x=="✅ Cumprida").sum())
-        ).reset_index().sort_values("Total", ascending=False))
-        rt.columns = ["Turma","Total (kg)","Participantes","Cadetes","Metas Cumpridas"]
-        rt["Total (kg)"] = rt["Total (kg)"].map("{:.2f}".format)
-        st.dataframe(rt, use_container_width=True, hide_index=True)
+        if not df.empty:
+            rt = (df.groupby("turma").agg(
+                Total=("kg_total","sum"), Participantes=("kg_total", lambda x:(x>0).sum()),
+                Cadetes=("nome","count"), Metas=("Meta Individual", lambda x:(x=="✅ Cumprida").sum())
+            ).reset_index().sort_values("Total", ascending=False))
+            rt.columns = ["Turma","Total (kg)","Participantes","Cadetes","Metas Cumpridas"]
+            rt["Total (kg)"] = rt["Total (kg)"].map("{:.2f}".format)
+            st.dataframe(rt, use_container_width=True, hide_index=True)
+        else:
+            st.info("Sem dados para exibir.")
 
 
 # ─────────────────────────────────────────────
@@ -993,15 +1097,15 @@ elif menu == "Minhas Folgas":
                             datas_selecionadas.append(d)
                     
                     if st.form_submit_button("Salvar Datas", type="primary"):
-                        salvar_datas_folga(
+                        if salvar_datas_folga(
                             st.session_state.cadete_logado, 
                             cad_logado_row['nome'], 
                             cad_logado_row['turma'], 
                             cad_logado_row['pelotao'], 
                             mes_gozo, 
                             datas_selecionadas
-                        )
-                        st.success("Suas folgas foram agendadas com sucesso!")
+                        ):
+                            st.success("Suas folgas foram agendadas com sucesso!")
 
 
 # ─────────────────────────────────────────────
@@ -1082,10 +1186,11 @@ elif menu == "Relatório de Folgas" and is_admin:
         df_f_del["selecao"] = df_f_del["nome"] + " (" + df_f_del["turma"] + " - " + df_f_del["pelotao"] + ")"
         
         with st.form("form_deletar_folga"):
-            st.warning("Isto fará o cadete perder as datas marcadas e ele precisará agendar novamente.")
+            st.warning("⚠️ CUIDADO: Isto fará o cadete perder as datas marcadas e ele precisará agendar novamente.")
             folga_a_remover = st.selectbox("Selecione o registro para apagar:", df_f_del["selecao"].tolist())
+            confirmacao = st.checkbox("Confirmo que desejo deletar este registro permanentemente")
             
-            if st.form_submit_button("Deletar Registro", type="primary"):
+            if st.form_submit_button("Deletar Registro", type="primary", disabled=not confirmacao):
                 id_cad_del = df_f_del[df_f_del["selecao"] == folga_a_remover].iloc[0]["id_cadete"]
                 db.collection("folgas").document(f"{id_cad_del}_{mes_relatorio}").delete()
                 buscar_folgas.clear()
@@ -1112,15 +1217,16 @@ elif menu == "Lançar Doação" and is_admin:
             nome_cadete = cadete_sel.split("(")[0].strip()
             c1, c2 = st.columns(2)
             with c1:
-                arroz    = st.number_input("Arroz (kg):",    min_value=0.0, max_value=50.0, step=0.5, format="%.2f")
-                macarrao = st.number_input("Macarrão (kg):", min_value=0.0, max_value=50.0, step=0.5, format="%.2f")
+                arroz    = st.number_input("Arroz (kg):",    min_value=0.0, max_value=50.0, step=0.5, format="%.2f", help="Mínimo 2 kg para meta")
+                macarrao = st.number_input("Macarrão (kg):", min_value=0.0, max_value=50.0, step=0.5, format="%.2f", help="Mínimo 2 kg para meta")
             with c2:
-                feijao   = st.number_input("Feijão (kg):",   min_value=0.0, max_value=50.0, step=0.5, format="%.2f")
+                feijao   = st.number_input("Feijão (kg):",   min_value=0.0, max_value=50.0, step=0.5, format="%.2f", help="Mínimo 2 kg para meta")
             if st.form_submit_button("➕ Somar Pesagem"):
                 if arroz + feijao + macarrao == 0:
                     st.warning("Insira um valor maior que zero.")
                 else:
                     salvar_doacao(id_cadete, nome_cadete, mes_doacao, arroz, feijao, macarrao)
+                    buscar_arrecadacoes.clear()
                     st.success(f"Pesagem somada para **{nome_cadete}** em {mes_doacao}.")
 
 # ─────────────────────────────────────────────
@@ -1152,12 +1258,13 @@ elif menu == "Corrigir Doação" and is_admin:
             st.markdown("**Valores CORRETOS (totais):**")
             c1, c2 = st.columns(2)
             with c1:
-                na = st.number_input("Arroz (kg):",    min_value=0.0, max_value=200.0, value=va, step=0.5, format="%.2f")
-                nm = st.number_input("Macarrão (kg):", min_value=0.0, max_value=200.0, value=vm, step=0.5, format="%.2f")
+                na = st.number_input("Arroz (kg):",    min_value=0.0, max_value=200.0, value=va, step=0.5, format="%.2f", help="Valor TOTAL correto")
+                nm = st.number_input("Macarrão (kg):", min_value=0.0, max_value=200.0, value=vm, step=0.5, format="%.2f", help="Valor TOTAL correto")
             with c2:
-                nf = st.number_input("Feijão (kg):",   min_value=0.0, max_value=200.0, value=vf, step=0.5, format="%.2f")
+                nf = st.number_input("Feijão (kg):",   min_value=0.0, max_value=200.0, value=vf, step=0.5, format="%.2f", help="Valor TOTAL correto")
             if st.form_submit_button("✅ Confirmar Correção", type="primary"):
                 corrigir_doacao(id_cadete, nome_cadete, mes_corr, na, nf, nm)
+                buscar_arrecadacoes.clear()
                 st.success(f"Correção aplicada. Novo total: {na+nf+nm:.2f} kg.")
 
 
@@ -1167,21 +1274,45 @@ elif menu == "Corrigir Doação" and is_admin:
 elif menu == "Histórico" and is_admin:
     st.title("📜 Histórico de Lançamentos")
     st.caption("Todas as operações em ordem cronológica decrescente.")
+    
     mes_hist = st.selectbox("Mês:", meses_disponiveis, key="mes_hist")
     df_hist  = buscar_historico(mes_hist)
+    
     if df_hist.empty:
         st.info("Nenhum lançamento registrado para este mês.")
     else:
-        busca = st.text_input("Filtrar por cadete:", placeholder="Digite parte do nome...")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            busca = st.text_input("Filtrar por cadete:", placeholder="Digite parte do nome...")
+        with col2:
+            tipo_filtro = st.multiselect("Tipo de operação:", ["lançamento", "correção"], default=["lançamento", "correção"])
+        with col3:
+            itens_por_pagina = st.selectbox("Itens por página:", [10, 25, 50, 100], index=1)
+        
         if busca.strip():
             df_hist = df_hist[df_hist["nome_cadete"].str.contains(busca.strip(), case=False, na=False)]
-        df_e = df_hist[["timestamp","nome_cadete","tipo","kg_arroz","kg_feijao","kg_macarrao","kg_total"]].copy()
+        
+        df_hist = df_hist[df_hist["tipo"].isin(tipo_filtro)]
+        
+        total_registros = len(df_hist)
+        total_paginas = (total_registros + itens_por_pagina - 1) // itens_por_pagina
+        
+        if total_paginas > 1:
+            pagina = st.slider("Página:", 1, total_paginas, 1)
+        else:
+            pagina = 1
+        
+        inicio = (pagina - 1) * itens_por_pagina
+        fim = inicio + itens_por_pagina
+        df_pagina = df_hist.iloc[inicio:fim]
+        
+        df_e = df_pagina[["timestamp","nome_cadete","tipo","kg_arroz","kg_feijao","kg_macarrao","kg_total"]].copy()
         df_e["timestamp"] = pd.to_datetime(df_e["timestamp"], utc=True).dt.tz_convert("America/Sao_Paulo").dt.strftime("%d/%m/%Y %H:%M:%S")
         df_e.columns = ["Data/Hora (BRT)","Cadete","Operação","Arroz (kg)","Feijão (kg)","Macarrão (kg)","Total (kg)"]
         for col in ["Arroz (kg)","Feijão (kg)","Macarrão (kg)","Total (kg)"]:
             df_e[col] = df_e[col].map("{:.2f}".format)
         st.dataframe(df_e, use_container_width=True, hide_index=True)
-        st.caption(f"{len(df_e)} registros exibidos.")
+        st.caption(f"Exibindo {len(df_pagina)} de {total_registros} registros (Página {pagina}/{total_paginas})")
 
 
 # ─────────────────────────────────────────────
@@ -1211,12 +1342,19 @@ elif menu == "Gerenciar Cadetes" and is_admin:
             df_rem = df_rem.copy()
             df_rem["selecao"] = df_rem["nome"] + " (" + df_rem["turma"] + ")"
             with st.form("form_remover"):
-                st.warning("⚠️ Atenção: Remover um cadete apagará TODOS os registros de folga atrelados a ele permanentemente.")
+                st.error("🔴 ATENÇÃO CRÍTICA: Remover um cadete apagará PERMANENTEMENTE:")
+                st.write("- Cadete e todas suas informações")
+                st.write("- Todas as doações registradas")
+                st.write("- Todas as folgas agendadas")
+                st.write("- Todo o histórico de operações")
                 cadete_rem = st.selectbox("Cadete a remover:", df_rem["selecao"].tolist())
                 id_rem = df_rem[df_rem["selecao"]==cadete_rem]["id"].values[0]
-                if st.form_submit_button("Remover Definitivamente", type="primary"):
+                confirmacao = st.checkbox(f"Confirmo a DELEÇÃO PERMANENTE de {cadete_rem.split('(')[0].strip()}")
+                if st.form_submit_button("Remover Definitivamente", type="primary", disabled=not confirmacao):
                     deletar_cadete(id_rem)
-                    st.success(f"{cadete_rem.split('(')[0].strip()} removido e suas folgas foram apagadas.")
+                    st.success(f"{cadete_rem.split('(')[0].strip()} removido permanentemente.")
+                    buscar_cadetes.clear()
+                    st.rerun()
                     
     with tab3:
         df_senha = buscar_cadetes()
