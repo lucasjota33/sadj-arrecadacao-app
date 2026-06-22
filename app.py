@@ -1164,9 +1164,17 @@ elif menu == "Relatório de Folgas" and is_admin:
             st.success(f"O mês {mes_relatorio} está encerrado para agendamento.")
         else:
             st.info(f"O mês {mes_relatorio} ainda está aberto para agendamento.")
+        def obter_folgas_separadas(datas):
+            if not isinstance(datas, list):
+                return ["-", "-", "-", "-"]
+            folgas = [d for d in datas if d]
+            return [folgas[i] if i < len(folgas) else "-" for i in range(4)]
+
         df_export = df_f[["nome", "turma", "pelotao", "datas"]].copy()
-        df_export.columns = ["Cadete", "Turma", "Pelotão", "Datas Agendadas"]
-        df_export["Datas Agendadas"] = df_export["Datas Agendadas"].apply(lambda x: ", ".join(x) if isinstance(x, list) else x)
+        folgas_separadas = df_export["datas"].apply(obter_folgas_separadas).tolist()
+        df_export[["Folga 1", "Folga 2", "Folga 3", "Folga 4"]] = pd.DataFrame(folgas_separadas, index=df_export.index)
+        df_export = df_export.drop(columns=["datas"])
+        df_export.columns = ["Cadete", "Turma", "Pelotão", "Folga 1", "Folga 2", "Folga 3", "Folga 4"]
         df_export = df_export.sort_values(by=["Turma", "Pelotão", "Cadete"])
         
         st.dataframe(df_export, use_container_width=True, hide_index=True)
@@ -1197,21 +1205,29 @@ elif menu == "Relatório de Folgas" and is_admin:
                 pdf.cell(60, 8, "Cadete", 1)
                 pdf.cell(30, 8, "Turma", 1)
                 pdf.cell(30, 8, "Pelotao", 1)
-                pdf.cell(70, 8, "Datas", 1)
+                pdf.cell(17.5, 8, "Folga 1", 1)
+                pdf.cell(17.5, 8, "Folga 2", 1)
+                pdf.cell(17.5, 8, "Folga 3", 1)
+                pdf.cell(17.5, 8, "Folga 4", 1)
                 pdf.ln()
                 
                 pdf.set_font("Arial", '', 9)
                 for _, row in df_export.iterrows():
-                    # Tratar caracteres especiais para o PDF padrao
                     nome_str = str(row['Cadete']).encode('latin-1', 'replace').decode('latin-1')
                     turma_str = str(row['Turma']).encode('latin-1', 'replace').decode('latin-1')
                     pel_str = str(row['Pelotão']).encode('latin-1', 'replace').decode('latin-1')
-                    dt_str = str(row['Datas Agendadas']).encode('latin-1', 'replace').decode('latin-1')
+                    folga_1 = str(row['Folga 1']).encode('latin-1', 'replace').decode('latin-1')
+                    folga_2 = str(row['Folga 2']).encode('latin-1', 'replace').decode('latin-1')
+                    folga_3 = str(row['Folga 3']).encode('latin-1', 'replace').decode('latin-1')
+                    folga_4 = str(row['Folga 4']).encode('latin-1', 'replace').decode('latin-1')
                     
                     pdf.cell(60, 8, nome_str, 1)
                     pdf.cell(30, 8, turma_str, 1)
                     pdf.cell(30, 8, pel_str, 1)
-                    pdf.cell(70, 8, dt_str, 1)
+                    pdf.cell(17.5, 8, folga_1, 1)
+                    pdf.cell(17.5, 8, folga_2, 1)
+                    pdf.cell(17.5, 8, folga_3, 1)
+                    pdf.cell(17.5, 8, folga_4, 1)
                     pdf.ln()
                 
                 pdf_bytes = pdf.output(dest='S').encode('latin-1')
