@@ -348,6 +348,21 @@ def buscar_folgas(mes_gozo):
     for doc in docs: lista.append(doc.to_dict())
     return pd.DataFrame(lista)
 
+@st.cache_data(ttl=60, show_spinner=False)
+def buscar_status_mes(mes_ano):
+    doc = db.collection("meses_status").document(mes_ano).get()
+    if not doc.exists:
+        return False
+    return doc.to_dict().get("encerrado", False)
+
+def set_status_mes(mes_ano, encerrado):
+    db.collection("meses_status").document(mes_ano).set({
+        "mes_ano": mes_ano,
+        "encerrado": encerrado,
+        "updated_at": datetime.now(timezone.utc),
+    }, merge=True)
+
+
 def salvar_cadete(nome, turma, pelotao, senha=None):
     doc_data = {"nome": nome, "turma": turma, "pelotao": pelotao}
     if senha: doc_data["senha"] = senha
@@ -437,10 +452,26 @@ meses_disponiveis = ["Junho 2026","Julho 2026","Agosto 2026","Setembro 2026",
 mes_selecionado = st.sidebar.selectbox("Visualizar dados do mês:", meses_disponiveis)
 
 if st.sidebar.button("🔄 Atualizar agora"):
-    buscar_cadetes.clear(); buscar_arrecadacoes.clear(); buscar_historico.clear(); buscar_folgas.clear()
+    buscar_cadetes.clear(); buscar_arrecadacoes.clear(); buscar_historico.clear(); buscar_folgas.clear(); buscar_status_mes.clear()
     st.rerun()
 
 if is_admin:
+    st.sidebar.markdown("### 📌 Status da Arrecadação")
+    mes_status_selecionado = st.sidebar.selectbox("Mês para controle:", meses_disponiveis, key="mes_status")
+    status_encerrado = buscar_status_mes(mes_status_selecionado)
+    if status_encerrado:
+        st.sidebar.success(f"Arrecadação de {mes_status_selecionado} está encerrada.")
+        if st.sidebar.button("🔄 Retomar arrecadação", key="btn_reabrir"):
+            set_status_mes(mes_status_selecionado, False)
+            buscar_status_mes.clear()
+            st.experimental_rerun()
+    else:
+        st.sidebar.info(f"Arrecadação de {mes_status_selecionado} está aberta.")
+        if st.sidebar.button("✅ Encerrar arrecadação", key="btn_encerrar"):
+            set_status_mes(mes_status_selecionado, True)
+            buscar_status_mes.clear()
+            st.experimental_rerun()
+
     menu = st.sidebar.radio("Navegação:",
         ["Painel de Liderança", "Minhas Folgas", "Lançar Doação", "Corrigir Doação", "Relatório de Folgas", "Histórico", "Gerenciar Cadetes"])
 else:
@@ -931,26 +962,31 @@ elif menu == "Minhas Folgas":
             for m in motivos:
                 st.markdown(f"- {m}")
             
-            st.markdown("#### Agende suas folgas abaixo:")
-            df_folgas_db = buscar_folgas(mes_gozo)
-            folgas_ja_salvas = []
-            if not df_folgas_db.empty:
-                registro = df_folgas_db[df_folgas_db["id_cadete"] == st.session_state.cadete_logado]
-                if not registro.empty:
-                    folgas_ja_salvas = registro.iloc[0].get("datas", [])
-            
-            with st.form("form_agendar_folgas"):
-                col_datas = st.columns(min(qtd_folgas, 4))
-                datas_selecionadas = []
+            mes_arrecadacao = meses_disponiveis[meses_disponiveis.index(mes_gozo) - 1]
+            if not buscar_status_mes(mes_arrecadacao):
+                st.warning(f"A arrecadação de {mes_arrecadacao} ainda não foi encerrada pela administração.")
+                st.info("Quando o mês for encerrado, você poderá agendar suas folgas para o mês selecionado.")
+            else:
+                st.markdown("#### Agende suas folgas abaixo:")
+                df_folgas_db = buscar_folgas(mes_gozo)
+                folgas_ja_salvas = []
+                if not df_folgas_db.empty:
+                    registro = df_folgas_db[df_folgas_db["id_cadete"] == st.session_state.cadete_logado]
+                    if not registro.empty:
+                        folgas_ja_salvas = registro.iloc[0].get("datas", [])
                 
-                for i in range(qtd_folgas):
-                    with col_datas[i % 4]: # Evita quebrar layout se houver mais de 4 folgas
-                        try:
-                            val_padrao = datetime.strptime(folgas_ja_salvas[i], "%d/%m/%Y").date() if i < len(folgas_ja_salvas) else None
-                        except:
-                            val_padrao = None
-                        d = st.date_input(f"Data da Folga {i+1}", value=val_padrao, format="DD/MM/YYYY")
-                        datas_selecionadas.append(d)
+                with st.form("form_agendar_folgas"):
+                    col_datas = st.columns(min(qtd_folgas, 4))
+                    datas_selecionadas = []
+                    
+                    for i in range(qtd_folgas):
+                        with col_datas[i % 4]: # Evita quebrar layout se houver mais de 4 folgas
+                            try:
+                                val_padrao = datetime.strptime(folgas_ja_salvas[i], "%d/%m/%Y").date() if i < len(folgas_ja_salvas) else None
+                            except:
+                                val_padrao = None
+                            d = st.date_input(f"Data da Folga {i+1}", value=val_padrao, format="DD/MM/YYYY")
+                            datas_selecionadas.append(d)
                 
                 if st.form_submit_button("Salvar Datas", type="primary"):
                     salvar_datas_folga(
