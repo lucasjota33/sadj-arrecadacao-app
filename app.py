@@ -987,17 +987,17 @@ elif menu == "Minhas Folgas":
                                 val_padrao = None
                             d = st.date_input(f"Data da Folga {i+1}", value=val_padrao, format="DD/MM/YYYY")
                             datas_selecionadas.append(d)
-                
-                if st.form_submit_button("Salvar Datas", type="primary"):
-                    salvar_datas_folga(
-                        st.session_state.cadete_logado, 
-                        cad_logado_row['nome'], 
-                        cad_logado_row['turma'], 
-                        cad_logado_row['pelotao'], 
-                        mes_gozo, 
-                        datas_selecionadas
-                    )
-                    st.success("Suas folgas foram agendadas com sucesso!")
+                    
+                    if st.form_submit_button("Salvar Datas", type="primary"):
+                        salvar_datas_folga(
+                            st.session_state.cadete_logado, 
+                            cad_logado_row['nome'], 
+                            cad_logado_row['turma'], 
+                            cad_logado_row['pelotao'], 
+                            mes_gozo, 
+                            datas_selecionadas
+                        )
+                        st.success("Suas folgas foram agendadas com sucesso!")
 
 
 # ─────────────────────────────────────────────
