@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# CSS — ESTILO PAINEL ESCURO TIPO GARMIN
+# CSS — ESTILO PAINEL CLARO
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -24,28 +24,28 @@ st.markdown("""
 /* Reset e fundo geral */
 html, body, [class*="css"], .stApp {
     font-family: 'Inter', sans-serif;
-    background-color: #1a1f2e !important;
-    color: #e8eaf0 !important;
+    background-color: #f8f9fa !important;
+    color: #1f2937 !important;
 }
 
-/* Sidebar escura */
+/* Sidebar clara */
 section[data-testid="stSidebar"] {
-    background-color: #111520 !important;
-    border-right: 1px solid #2a3045 !important;
+    background-color: #ffffff !important;
+    border-right: 1px solid #e5e7eb !important;
 }
-section[data-testid="stSidebar"] * { color: #c8ccd8 !important; }
+section[data-testid="stSidebar"] * { color: #374151 !important; }
 section[data-testid="stSidebar"] input,
 section[data-testid="stSidebar"] .stSelectbox > div > div {
-    background-color: #1e2438 !important;
-    color: #e8eaf0 !important;
-    border: 1px solid #3a4060 !important;
+    background-color: #ffffff !important;
+    color: #1f2937 !important;
+    border: 1px solid #d1d5db !important;
 }
 
 /* Títulos */
 h1 { font-size: 1.5rem !important; font-weight: 700 !important;
-     color: #ffffff !important; letter-spacing: -0.3px; margin-bottom: 2px !important; }
+     color: #111827 !important; letter-spacing: -0.3px; margin-bottom: 2px !important; }
 h2 { font-size: 1rem !important; font-weight: 600 !important;
-     color: #8b92a8 !important; text-transform: uppercase; letter-spacing: 1px; }
+     color: #4b5563 !important; text-transform: uppercase; letter-spacing: 1px; }
 h3 { font-size: 0.8rem !important; font-weight: 500 !important;
      color: #6b7280 !important; text-transform: uppercase; letter-spacing: 1.2px; }
 
@@ -58,71 +58,73 @@ h3 { font-size: 0.8rem !important; font-weight: 500 !important;
 
 /* Cards principais (wrapper HTML customizado) */
 .g-card {
-    background: #1e2438;
-    border: 1px solid #2a3350;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
     border-radius: 14px;
     padding: 18px 20px 16px 20px;
     position: relative;
     overflow: hidden;
     height: 100%;
     min-height: 130px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
 }
 .g-card::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 3px;
-    background: var(--accent, #4c8ef7);
+    background: var(--accent, #3b82f6);
     border-radius: 14px 14px 0 0;
 }
 .g-card .g-label {
     font-size: 0.7rem;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1.3px;
-    color: #6b7a99;
+    color: #6b7280;
     margin-bottom: 8px;
 }
 .g-card .g-value {
     font-size: 2.1rem;
     font-weight: 800;
-    color: #ffffff;
+    color: #111827;
     line-height: 1;
     margin-bottom: 6px;
 }
-.g-card .g-value.green  { color: #34d399; }
-.g-card .g-value.yellow { color: #fbbf24; }
-.g-card .g-value.blue   { color: #60a5fa; }
-.g-card .g-value.orange { color: #fb923c; }
+.g-card .g-value.green  { color: #059669; }
+.g-card .g-value.yellow { color: #d97706; }
+.g-card .g-value.blue   { color: #2563eb; }
+.g-card .g-value.orange { color: #ea580c; }
 .g-card .g-sub {
     font-size: 0.75rem;
-    color: #6b7a99;
+    color: #6b7280;
     margin-top: 2px;
 }
 .g-card .g-icon {
     position: absolute;
     top: 16px; right: 18px;
     font-size: 1.6rem;
-    opacity: 0.18;
+    opacity: 0.1;
+    color: #111827;
 }
 
 /* Card de destaque (ouro) */
 .g-card-gold {
-    background: linear-gradient(135deg, #2a2210 0%, #1e2438 60%);
-    border: 1px solid #5a4a1a;
+    background: linear-gradient(135deg, #fffbeb 0%, #ffffff 60%);
+    border: 1px solid #fde68a;
 }
-.g-card-gold::before { background: #fbbf24; }
+.g-card-gold::before { background: #f59e0b; }
 
 /* Card de meta atingida (verde) */
 .g-card-green {
-    background: linear-gradient(135deg, #0d2a1a 0%, #1e2438 60%);
-    border: 1px solid #1a5a32;
+    background: linear-gradient(135deg, #ecfdf5 0%, #ffffff 60%);
+    border: 1px solid #a7f3d0;
 }
-.g-card-green::before { background: #34d399; }
+.g-card-green::before { background: #10b981; }
 
 /* Barra de progresso custom */
 .g-progress-wrap {
-    background: #2a3045;
+    background: #f3f4f6;
     border-radius: 99px;
     height: 10px;
     width: 100%;
@@ -132,13 +134,13 @@ h3 { font-size: 0.8rem !important; font-weight: 500 !important;
 .g-progress-bar {
     height: 10px;
     border-radius: 99px;
-    background: linear-gradient(90deg, #4c8ef7 0%, #34d399 100%);
+    background: linear-gradient(90deg, #3b82f6 0%, #10b981 100%);
     transition: width 0.4s ease;
 }
 
 /* Barra de progresso por alimento */
 .g-mini-bar-wrap {
-    background: #2a3045;
+    background: #f3f4f6;
     border-radius: 99px;
     height: 6px;
     width: 100%;
@@ -149,36 +151,37 @@ h3 { font-size: 0.8rem !important; font-weight: 500 !important;
 
 /* Grid de cards de destaque (pelotão/turma) */
 .g-leader-card {
-    background: #1e2438;
-    border: 1px solid #2a3350;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
     border-radius: 10px;
     padding: 12px 14px;
     margin-bottom: 8px;
     display: flex;
     align-items: center;
     gap: 12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
 }
 .g-leader-card .rank {
     font-size: 1.2rem;
     font-weight: 800;
-    color: #fbbf24;
+    color: #f59e0b;
     min-width: 30px;
 }
 .g-leader-card .info { flex: 1; }
 .g-leader-card .info .name {
     font-size: 0.9rem;
-    font-weight: 600;
-    color: #e8eaf0;
+    font-weight: 700;
+    color: #111827;
 }
 .g-leader-card .info .sub {
     font-size: 0.72rem;
-    color: #6b7a99;
+    color: #6b7280;
     margin-top: 2px;
 }
 .g-leader-card .kg {
     font-size: 1.1rem;
     font-weight: 700;
-    color: #60a5fa;
+    color: #2563eb;
     white-space: nowrap;
 }
 .g-leader-card .badge {
@@ -189,8 +192,8 @@ h3 { font-size: 0.8rem !important; font-weight: 500 !important;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
-.badge-ok   { background: #064e3b; color: #34d399; }
-.badge-pend { background: #1e2438; color: #6b7a99; border: 1px solid #3a4060; }
+.badge-ok   { background: #d1fae5; color: #065f46; }
+.badge-pend { background: #f3f4f6; color: #4b5563; border: 1px solid #d1d5db; }
 
 /* Seção título */
 .g-section {
@@ -198,28 +201,29 @@ h3 { font-size: 0.8rem !important; font-weight: 500 !important;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    color: #4b5470;
+    color: #4b5563;
     margin: 28px 0 12px 0;
     padding-bottom: 8px;
-    border-bottom: 1px solid #2a3045;
+    border-bottom: 1px solid #e5e7eb;
 }
 
 /* Card de status individual */
 .g-status-card {
-    background: #1e2438;
-    border: 1px solid #2a3350;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
     border-radius: 12px;
     padding: 16px 20px;
     margin-bottom: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
 }
 .g-status-card .s-name {
     font-size: 1rem;
     font-weight: 700;
-    color: #ffffff;
+    color: #111827;
 }
 .g-status-card .s-sub {
     font-size: 0.72rem;
-    color: #6b7a99;
+    color: #6b7280;
     margin-bottom: 12px;
 }
 .g-status-card .s-foods {
@@ -233,20 +237,20 @@ h3 { font-size: 0.8rem !important; font-weight: 500 !important;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: #6b7a99;
+    color: #6b7280;
     margin-bottom: 3px;
 }
 .g-food-item .f-val {
     font-size: 1.05rem;
     font-weight: 700;
-    color: #e8eaf0;
+    color: #1f2937;
 }
 .g-food-item .f-delta {
     font-size: 0.68rem;
     margin-top: 1px;
 }
-.f-delta.pos { color: #34d399; }
-.f-delta.neg { color: #f87171; }
+.f-delta.pos { color: #059669; }
+.f-delta.neg { color: #dc2626; }
 
 /* Ocultar elementos padrão do Streamlit que não queremos */
 .stProgress { display: none; }
@@ -254,36 +258,30 @@ footer { display: none !important; }
 #MainMenu { display: none !important; }
 header[data-testid="stHeader"] { background: transparent !important; }
 
-/* Dataframe escuro */
-[data-testid="stDataFrame"] iframe {
-    filter: invert(1) hue-rotate(180deg);
-    border-radius: 8px;
-}
-
 /* Inputs e selects no conteúdo */
 .stTextInput input, .stSelectbox > div > div, .stNumberInput input {
-    background-color: #1e2438 !important;
-    color: #e8eaf0 !important;
-    border: 1px solid #3a4060 !important;
+    background-color: #ffffff !important;
+    color: #1f2937 !important;
+    border: 1px solid #d1d5db !important;
     border-radius: 8px !important;
 }
-.stForm { border-color: #2a3045 !important; background: #1e2438 !important; border-radius: 12px !important; }
+.stForm { border-color: #e5e7eb !important; background: #ffffff !important; border-radius: 12px !important; }
 .stAlert { border-radius: 10px !important; }
 
 /* Tabs */
-.stTabs [data-baseweb="tab-list"] { background: #111520 !important; border-radius: 8px; }
-.stTabs [data-baseweb="tab"] { color: #6b7a99 !important; }
-.stTabs [aria-selected="true"] { color: #60a5fa !important; }
+.stTabs [data-baseweb="tab-list"] { background: #f8f9fa !important; border-radius: 8px; }
+.stTabs [data-baseweb="tab"] { color: #4b5563 !important; }
+.stTabs [aria-selected="true"] { color: #2563eb !important; font-weight: 600 !important; }
 
 /* Botões */
 .stButton > button {
-    background: #2a3a6a !important;
-    color: #e8eaf0 !important;
-    border: 1px solid #3a4f8a !important;
+    background: #ffffff !important;
+    color: #1f2937 !important;
+    border: 1px solid #d1d5db !important;
     border-radius: 8px !important;
     font-weight: 600 !important;
 }
-.stButton > button:hover { background: #3a4f8a !important; }
+.stButton > button:hover { background: #f3f4f6 !important; border-color: #9ca3af !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -425,7 +423,7 @@ def lider_de_grupo(df, col_grupo):
     idx = df.groupby(col_grupo)["kg_total"].idxmax()
     return df.loc[idx, [col_grupo,"nome","kg_total","Meta Individual"]].reset_index(drop=True)
 
-def barra_html(pct, color="#4c8ef7", height=10):
+def barra_html(pct, color="#3b82f6", height=10):
     w = min(pct * 100, 100)
     return f"""<div class="g-progress-wrap" style="height:{height}px">
         <div class="g-progress-bar" style="width:{w}%;height:{height}px;background:{color}"></div>
@@ -445,11 +443,11 @@ if menu == "Painel de Liderança":
     # Cabeçalho
     st.markdown(f"""
     <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
-        <span style="font-size:1.5rem;font-weight:800;color:#fff">🏆 Campanha SADJ</span>
-        <span style="font-size:0.8rem;font-weight:500;color:#4b5470;text-transform:uppercase;
+        <span style="font-size:1.5rem;font-weight:800;color:#111827">🏆 Campanha SADJ</span>
+        <span style="font-size:0.8rem;font-weight:500;color:#6b7280;text-transform:uppercase;
               letter-spacing:1.2px">{mes_selecionado}</span>
     </div>
-    <div style="font-size:0.75rem;color:#4b5470;margin-bottom:24px">
+    <div style="font-size:0.75rem;color:#6b7280;margin-bottom:24px">
         Arroz · Feijão · Macarrão &nbsp;|&nbsp; Meta Geral: 800 kg &nbsp;|&nbsp; Período: 08 a 25 de junho
     </div>
     """, unsafe_allow_html=True)
@@ -476,21 +474,21 @@ if menu == "Painel de Liderança":
 
     with k1:
         st.markdown(f"""
-        <div class="g-card" style="--accent:#4c8ef7">
+        <div class="g-card" style="--accent:#3b82f6">
             <div class="g-icon">⚖️</div>
             <div class="g-label">Total Arrecadado</div>
-            <div class="g-value blue">{total_geral:.1f}<span style="font-size:1rem;font-weight:500;color:#4b6a99"> kg</span></div>
-            {barra_html(pct_meta, "#4c8ef7", 7)}
+            <div class="g-value blue">{total_geral:.1f}<span style="font-size:1rem;font-weight:500;color:#6b7280"> kg</span></div>
+            {barra_html(pct_meta, "#3b82f6", 7)}
             <div class="g-sub">{pct_meta*100:.1f}% da meta de {meta_cfo:.0f} kg</div>
         </div>""", unsafe_allow_html=True)
 
     with k2:
-        cor_meta = "#34d399" if metas_ok == total_cadetes else "#fbbf24"
+        cor_meta = "#10b981" if metas_ok == total_cadetes else "#f59e0b"
         st.markdown(f"""
         <div class="g-card" style="--accent:{cor_meta}">
             <div class="g-icon">🎯</div>
             <div class="g-label">Metas Individuais</div>
-            <div class="g-value" style="color:{cor_meta}">{metas_ok}<span style="font-size:1rem;font-weight:400;color:#4b6a99"> / {total_cadetes}</span></div>
+            <div class="g-value" style="color:{cor_meta}">{metas_ok}<span style="font-size:1rem;font-weight:400;color:#6b7280"> / {total_cadetes}</span></div>
             {barra_html(metas_ok/total_cadetes if total_cadetes else 0, cor_meta, 7)}
             <div class="g-sub">{total_cadetes - metas_ok} cadetes ainda sem meta cumprida</div>
         </div>""", unsafe_allow_html=True)
@@ -498,30 +496,30 @@ if menu == "Painel de Liderança":
     with k3:
         pct_part = participantes / total_cadetes if total_cadetes else 0
         st.markdown(f"""
-        <div class="g-card" style="--accent:#a78bfa">
+        <div class="g-card" style="--accent:#8b5cf6">
             <div class="g-icon">👥</div>
             <div class="g-label">Participantes</div>
-            <div class="g-value" style="color:#a78bfa">{participantes}<span style="font-size:1rem;font-weight:400;color:#4b6a99"> / {total_cadetes}</span></div>
-            {barra_html(pct_part, "#a78bfa", 7)}
+            <div class="g-value" style="color:#8b5cf6">{participantes}<span style="font-size:1rem;font-weight:400;color:#6b7280"> / {total_cadetes}</span></div>
+            {barra_html(pct_part, "#8b5cf6", 7)}
             <div class="g-sub">{sem_doacao} cadetes ainda sem nenhuma doação</div>
         </div>""", unsafe_allow_html=True)
 
     with k4:
         if faltam == 0:
             st.markdown(f"""
-            <div class="g-card g-card-green" style="--accent:#34d399">
+            <div class="g-card g-card-green" style="--accent:#10b981">
                 <div class="g-icon">🎉</div>
                 <div class="g-label">Meta Geral do CFO</div>
                 <div class="g-value green">Atingida!</div>
-                <div class="g-sub" style="color:#34d399">+1 Folga geral para todos!</div>
+                <div class="g-sub" style="color:#059669">+1 Folga geral para todos!</div>
             </div>""", unsafe_allow_html=True)
         else:
             st.markdown(f"""
-            <div class="g-card" style="--accent:#fb923c">
+            <div class="g-card" style="--accent:#f97316">
                 <div class="g-icon">🏁</div>
                 <div class="g-label">Faltam para 800 kg</div>
-                <div class="g-value orange">{faltam:.1f}<span style="font-size:1rem;font-weight:500;color:#4b6a99"> kg</span></div>
-                {barra_html(pct_meta, "#fb923c", 7)}
+                <div class="g-value orange">{faltam:.1f}<span style="font-size:1rem;font-weight:500;color:#6b7280"> kg</span></div>
+                {barra_html(pct_meta, "#f97316", 7)}
                 <div class="g-sub">Folga geral ao atingir a meta</div>
             </div>""", unsafe_allow_html=True)
 
@@ -537,16 +535,16 @@ if menu == "Painel de Liderança":
     f1, f2, f3 = st.columns(3)
 
     for col, label, icon, kg, color in [
-        (f1, "Arroz",    "🌾", total_arroz,  "#fbbf24"),
-        (f2, "Feijão",   "🫘", total_feijao, "#fb923c"),
-        (f3, "Macarrão", "🍝", total_mac,    "#a78bfa"),
+        (f1, "Arroz",    "🌾", total_arroz,  "#f59e0b"),
+        (f2, "Feijão",   "🫘", total_feijao, "#f97316"),
+        (f3, "Macarrão", "🍝", total_mac,    "#8b5cf6"),
     ]:
         with col:
             st.markdown(f"""
             <div class="g-card" style="--accent:{color};min-height:110px">
                 <div class="g-icon">{icon}</div>
                 <div class="g-label">{label}</div>
-                <div class="g-value" style="color:{color};font-size:1.7rem">{kg:.1f}<span style="font-size:0.9rem;font-weight:500;color:#4b6a99"> kg</span></div>
+                <div class="g-value" style="color:{color};font-size:1.7rem">{kg:.1f}<span style="font-size:0.9rem;font-weight:500;color:#6b7280"> kg</span></div>
                 {barra_html(kg/total_geral if total_geral else 0, color, 5)}
                 <div class="g-sub">{kg/total_geral*100:.1f}% do total arrecadado</div>
             </div>""", unsafe_allow_html=True)
@@ -570,8 +568,8 @@ if menu == "Painel de Liderança":
                     is_dest_turma = r["kg_total"] == df_com_doacao[df_com_doacao["turma"]==r["turma"]]["kg_total"].max()
 
                 badges = ""
-                if is_dest_pel:   badges += '<span style="background:#1a3a5a;color:#60a5fa;font-size:0.65rem;font-weight:700;padding:2px 8px;border-radius:99px;margin-left:6px">🎖️ DEST. PELOTÃO</span>'
-                if is_dest_turma: badges += '<span style="background:#2a1a4a;color:#a78bfa;font-size:0.65rem;font-weight:700;padding:2px 8px;border-radius:99px;margin-left:6px">🎗️ DEST. TURMA</span>'
+                if is_dest_pel:   badges += '<span style="background:#dbeafe;color:#1e3a8a;font-size:0.65rem;font-weight:700;padding:2px 8px;border-radius:99px;margin-left:6px">🎖️ DEST. PELOTÃO</span>'
+                if is_dest_turma: badges += '<span style="background:#f3e8ff;color:#581c87;font-size:0.65rem;font-weight:700;padding:2px 8px;border-radius:99px;margin-left:6px">🎗️ DEST. TURMA</span>'
 
                 pct_total = min(r["kg_total"] / 7.0, 1.0)
                 falta_ind = max(7.0 - r["kg_total"], 0)
@@ -595,28 +593,28 @@ if menu == "Painel de Liderança":
                         <div class="g-food-item">
                             <div class="f-label">🌾 Arroz</div>
                             <div class="f-val">{r['kg_arroz']:.1f} kg</div>
-                            {mini_barra(r['kg_arroz'], 2.0, "#fbbf24")}
+                            {mini_barra(r['kg_arroz'], 2.0, "#f59e0b")}
                             {delta_span(d_arroz)}
                         </div>
                         <div class="g-food-item">
                             <div class="f-label">🫘 Feijão</div>
                             <div class="f-val">{r['kg_feijao']:.1f} kg</div>
-                            {mini_barra(r['kg_feijao'], 2.0, "#fb923c")}
+                            {mini_barra(r['kg_feijao'], 2.0, "#f97316")}
                             {delta_span(d_feijao)}
                         </div>
                         <div class="g-food-item">
                             <div class="f-label">🍝 Macarrão</div>
                             <div class="f-val">{r['kg_macarrao']:.1f} kg</div>
-                            {mini_barra(r['kg_macarrao'], 2.0, "#a78bfa")}
+                            {mini_barra(r['kg_macarrao'], 2.0, "#8b5cf6")}
                             {delta_span(d_mac)}
                         </div>
                     </div>
                     <div style="display:flex;align-items:center;gap:12px">
                         <div style="flex:1">
-                            {barra_html(pct_total, "#34d399" if falta_ind==0 else "#4c8ef7", 8)}
+                            {barra_html(pct_total, "#10b981" if falta_ind==0 else "#3b82f6", 8)}
                         </div>
-                        <div style="font-size:0.75rem;color:#6b7a99;white-space:nowrap">
-                            {"✅ Meta de 7 kg atingida!" if falta_ind==0 else f"Faltam <b style='color:#60a5fa'>{falta_ind:.1f} kg</b> para os 7 kg"}
+                        <div style="font-size:0.75rem;color:#6b7280;white-space:nowrap">
+                            {"✅ Meta de 7 kg atingida!" if falta_ind==0 else f"Faltam <b style='color:#3b82f6'>{falta_ind:.1f} kg</b> para os 7 kg"}
                         </div>
                     </div>
                 </div>
@@ -632,20 +630,20 @@ if menu == "Painel de Liderança":
         top_cfo = df_com_doacao[df_com_doacao["kg_total"] == maior_total]
         for _, row in top_cfo.iterrows():
             st.markdown(f"""
-            <div class="g-card g-card-gold" style="min-height:90px;--accent:#fbbf24">
-                <div class="g-icon" style="font-size:2rem;opacity:0.3">🏅</div>
+            <div class="g-card g-card-gold" style="min-height:90px;--accent:#f59e0b">
+                <div class="g-icon" style="font-size:2rem;opacity:0.1">🏅</div>
                 <div style="display:flex;align-items:center;gap:16px">
                     <div style="font-size:2rem">🥇</div>
                     <div>
-                        <div style="font-size:1.05rem;font-weight:700;color:#fff">{row['nome']}</div>
-                        <div style="font-size:0.75rem;color:#9b8a50;margin-top:2px">{row['turma']} · {row['pelotao']}</div>
-                        <div style="font-size:0.72rem;color:#6b7a99;margin-top:4px">
+                        <div style="font-size:1.05rem;font-weight:700;color:#111827">{row['nome']}</div>
+                        <div style="font-size:0.75rem;color:#b45309;margin-top:2px">{row['turma']} · {row['pelotao']}</div>
+                        <div style="font-size:0.72rem;color:#6b7280;margin-top:4px">
                             🌾 {row['kg_arroz']:.1f} kg &nbsp;·&nbsp; 🫘 {row['kg_feijao']:.1f} kg &nbsp;·&nbsp; 🍝 {row['kg_macarrao']:.1f} kg
                         </div>
                     </div>
                     <div style="margin-left:auto;text-align:right">
-                        <div style="font-size:2rem;font-weight:800;color:#fbbf24">{row['kg_total']:.1f}</div>
-                        <div style="font-size:0.75rem;color:#9b8a50">kg no total</div>
+                        <div style="font-size:2rem;font-weight:800;color:#f59e0b">{row['kg_total']:.1f}</div>
+                        <div style="font-size:0.75rem;color:#b45309">kg no total</div>
                     </div>
                 </div>
             </div>
@@ -657,7 +655,7 @@ if menu == "Painel de Liderança":
     col_pel, col_turma = st.columns(2)
 
     with col_pel:
-        st.markdown('<div class="g-section">🎖️ Destaque por Pelotão <span style="font-weight:400;color:#4b5470">+1 Folga</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="g-section">🎖️ Destaque por Pelotão <span style="font-weight:400;color:#6b7280">+1 Folga</span></div>', unsafe_allow_html=True)
         if df_com_doacao.empty:
             st.info("Nenhuma doação registrada ainda.")
         else:
@@ -678,7 +676,7 @@ if menu == "Painel de Liderança":
                 """, unsafe_allow_html=True)
 
     with col_turma:
-        st.markdown('<div class="g-section">🎗️ Destaque por Turma <span style="font-weight:400;color:#4b5470">+1 Folga</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="g-section">🎗️ Destaque por Turma <span style="font-weight:400;color:#6b7280">+1 Folga</span></div>', unsafe_allow_html=True)
         if df_com_doacao.empty:
             st.info("Nenhuma doação registrada ainda.")
         else:
