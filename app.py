@@ -3,7 +3,8 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1 import Increment
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
+import calendar
 import base64
 
 try:
@@ -406,6 +407,21 @@ def atualizar_senha_cadete(id_cadete, senha):
     db.collection("cadetes").document(id_cadete).update({"senha": senha})
     buscar_cadetes.clear()
 
+
+def obter_limites_mes(mes_gozo):
+    meses_map = {
+        "Junho 2026": (6, 2026), "Julho 2026": (7, 2026), "Agosto 2026": (8, 2026),
+        "Setembro 2026": (9, 2026), "Outubro 2026": (10, 2026),
+        "Novembro 2026": (11, 2026), "Dezembro 2026": (12, 2026),
+    }
+    if mes_gozo not in meses_map:
+        return None, None
+    mes_num, ano = meses_map[mes_gozo]
+    primeiro_dia = date(ano, mes_num, 1)
+    ultimo_dia = date(ano, mes_num, calendar.monthrange(ano, mes_num)[1])
+    return primeiro_dia, ultimo_dia
+
+
 def _registrar_historico(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, tipo):
     db.collection("historico").document().set({
         "id_cadete": id_cadete, "nome_cadete": nome_cadete, "mes_ano": mes_ano,
@@ -457,7 +473,10 @@ def validar_datas_folga(datas_list, mes_gozo):
         
         # Validar mês/ano
         if d.month != mes_num or d.year != ano:
-            erros.append(f"Data {d.strftime('%d/%m/%Y')} não está em {mes_gozo}")
+            erros.append(
+                f"Data {d.strftime('%d/%m/%Y')} não corresponde ao mês escolhido ({mes_gozo}). "
+                "Ajuste para uma data do mês correto."
+            )
             continue
         
         # Validar duplicatas
@@ -516,7 +535,7 @@ def verificar_rate_limit(ip_key: str, max_tentativas: int = 5) -> tuple[bool, st
         return False, f"Muitas tentativas. Tente novamente em {tempo_restante}s"
     
     if info["count"] >= max_tentativas:
-        info["bloqueado_ate"] = agora + datetime.timedelta(minutes=2)
+        info["bloqueado_ate"] = agora + timedelta(minutes=2)
         return False, "Conta bloqueada por 2 minutos. Muitas tentativas incorretas."
     
     return True, ""
@@ -1071,17 +1090,28 @@ elif menu == "Minhas Folgas":
                 st.markdown(f"- {m}")
             
             mes_arrecadacao = meses_disponiveis[meses_disponiveis.index(mes_gozo) - 1]
-            if not buscar_status_mes(mes_arrecadacao):
-                st.warning(f"A arrecadação de {mes_arrecadacao} ainda não foi encerrada pela administração.")
-                st.info("Quando o mês for encerrado, você poderá agendar suas folgas para o mês selecionado.")
+            status_mes_anterior = buscar_status_mes(mes_arrecadacao)
+            if not status_mes_anterior:
+                st.warning(
+                    f"A arrecadação de {mes_arrecadacao} ainda não foi encerrada pela administração. "
+                    f"Você poderá agendar folgas para {mes_gozo} após o fechamento."
+                )
             else:
                 st.markdown("#### Agende suas folgas abaixo:")
+                primeiro_dia, ultimo_dia = obter_limites_mes(mes_gozo)
+                if primeiro_dia and ultimo_dia:
+                    st.info(f"Escolha até {qtd_folgas} data(s) entre {primeiro_dia.strftime('%d/%m/%Y')} e {ultimo_dia.strftime('%d/%m/%Y')}.")
                 df_folgas_db = buscar_folgas(mes_gozo)
                 folgas_ja_salvas = []
                 if not df_folgas_db.empty:
                     registro = df_folgas_db[df_folgas_db["id_cadete"] == st.session_state.cadete_logado]
                     if not registro.empty:
                         folgas_ja_salvas = registro.iloc[0].get("datas", [])
+                if folgas_ja_salvas:
+                    st.success(
+                        f"Você já tem {len(folgas_ja_salvas)} data(s) agendadas: {', '.join(folgas_ja_salvas)}. "
+                        "Ajuste as datas abaixo se desejar."
+                    )
                 
                 with st.form("form_agendar_folgas"):
                     col_datas = st.columns(min(qtd_folgas, 4))
@@ -1091,9 +1121,17 @@ elif menu == "Minhas Folgas":
                         with col_datas[i % 4]: # Evita quebrar layout se houver mais de 4 folgas
                             try:
                                 val_padrao = datetime.strptime(folgas_ja_salvas[i], "%d/%m/%Y").date() if i < len(folgas_ja_salvas) else None
-                            except:
+                            except Exception:
                                 val_padrao = None
-                            d = st.date_input(f"Data da Folga {i+1}", value=val_padrao, format="DD/MM/YYYY")
+                            if not val_padrao and primeiro_dia:
+                                val_padrao = primeiro_dia + timedelta(days=i)
+                            d = st.date_input(
+                                f"Data da Folga {i+1}",
+                                value=val_padrao,
+                                min_value=primeiro_dia,
+                                max_value=ultimo_dia,
+                                format="DD/MM/YYYY"
+                            )
                             datas_selecionadas.append(d)
                     
                     if st.form_submit_button("Salvar Datas", type="primary"):
@@ -1121,6 +1159,11 @@ elif menu == "Relatório de Folgas" and is_admin:
     if df_f.empty:
         st.warning("Nenhuma folga agendada para este mês ainda.")
     else:
+        st.info(f"{len(df_f)} registro(s) de folga encontrados para {mes_relatorio}.")
+        if buscar_status_mes(mes_relatorio):
+            st.success(f"O mês {mes_relatorio} está encerrado para agendamento.")
+        else:
+            st.info(f"O mês {mes_relatorio} ainda está aberto para agendamento.")
         df_export = df_f[["nome", "turma", "pelotao", "datas"]].copy()
         df_export.columns = ["Cadete", "Turma", "Pelotão", "Datas Agendadas"]
         df_export["Datas Agendadas"] = df_export["Datas Agendadas"].apply(lambda x: ", ".join(x) if isinstance(x, list) else x)
@@ -1360,10 +1403,23 @@ elif menu == "Gerenciar Cadetes" and is_admin:
                 cadete_rem = st.selectbox("Cadete a remover:", df_rem["selecao"].tolist())
                 id_remocao_docs = df_rem[df_rem["selecao"]==cadete_rem]["id"].values
                 id_rem = id_remocao_docs[0] if len(id_remocao_docs) > 0 else None
-                confirmacao = st.checkbox(f"Confirmo a DELEÇÃO PERMANENTE de {cadete_rem.split('(')[0].strip()}")
+                confirmacao_txt = st.text_input(
+                    "Digite o nome completo do cadete para confirmar a exclusão:",
+                    placeholder=cadete_rem.split('(')[0].strip()
+                )
+                confirmacao = st.checkbox(f"Estou ciente e desejo excluir {cadete_rem.split('(')[0].strip()} permanentemente")
+                if id_rem is not None:
+                    doacoes_count = len(list(db.collection("arrecadacoes").where("id_cadete", "==", id_rem).stream()))
+                    folgas_count = len(list(db.collection("folgas").where("id_cadete", "==", id_rem).stream()))
+                    historico_count = len(list(db.collection("historico").where("id_cadete", "==", id_rem).stream()))
+                    st.info(
+                        f"Este cadete possui {doacoes_count} doação(ões), {folgas_count} registro(s) de folga e {historico_count} item(ns) no histórico."
+                    )
                 if st.form_submit_button("Remover Definitivamente", type="primary"):
                     if not confirmacao:
                         st.warning("Você precisa confirmar a exclusão antes de prosseguir.")
+                    elif confirmacao_txt.strip() != cadete_rem.split('(')[0].strip():
+                        st.error("O nome digitado não corresponde ao cadete selecionado.")
                     elif id_rem is None:
                         st.error("Erro: Cadete não encontrado no sistema.")
                     else:
