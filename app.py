@@ -165,7 +165,7 @@ def lider_de_grupo(df, coluna_grupo):
 # ─────────────────────────────────────────────
 if menu == "Painel de Liderança":
     st.title(f"🏆 Arrecadação de alimentos SADJ — {mes_selecionado}")
-    st.caption("Campanha SADJ × ABMDP II · Período: 08 a 25 de junho · Alimentos: Arroz, Feijão e Macarrão")
+    st.caption("Campanha SADJ · Alimentos: Arroz, Feijão e Macarrão")
 
     df_cadetes = buscar_cadetes()
 
