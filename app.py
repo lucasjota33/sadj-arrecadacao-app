@@ -355,8 +355,16 @@ def salvar_cadete(nome, turma, pelotao, senha=None):
     buscar_cadetes.clear()
 
 def deletar_cadete(id_cadete):
+    # 1. Deletar cadete
     db.collection("cadetes").document(id_cadete).delete()
+    
+    # 2. Buscar e deletar folgas associadas ao cadete
+    folgas_docs = db.collection("folgas").where("id_cadete", "==", id_cadete).stream()
+    for doc in folgas_docs:
+        db.collection("folgas").document(doc.id).delete()
+        
     buscar_cadetes.clear()
+    buscar_folgas.clear()
 
 def atualizar_senha_cadete(id_cadete, senha):
     db.collection("cadetes").document(id_cadete).update({"senha": senha})
@@ -458,9 +466,13 @@ def montar_df_principal(mes_ano):
 
 def calcular_folgas_cadete(id_cadete, mes_gozo):
     """Calcula as folgas de um cadete baseando-se no mês anterior ao mes_gozo"""
-    idx = meses_disponiveis.index(mes_gozo)
+    try:
+        idx = meses_disponiveis.index(mes_gozo)
+    except ValueError:
+        return 0, ["Mês selecionado inválido."]
+        
     if idx == 0:
-        return 0, ["Nenhuma campanha anterior a este mês."]
+        return 0, ["Nenhuma campanha anterior a este mês para gerar folgas."]
     
     mes_arrecadacao = meses_disponiveis[idx - 1]
     df = montar_df_principal(mes_arrecadacao)
@@ -901,15 +913,21 @@ elif menu == "Minhas Folgas":
             st.rerun()
         
         st.markdown("---")
-        mes_gozo = st.selectbox("Mês de gozo das Folgas:", meses_disponiveis, index=1 if len(meses_disponiveis)>1 else 0)
+        
+        # Só permite agendar nos meses a partir de Julho (pois Junho foi a doação base)
+        meses_gozo_permitidos = meses_disponiveis[1:] 
+        mes_gozo = st.selectbox(
+            "Selecione o mês para gozar as folgas (referentes à campanha do mês anterior):", 
+            meses_gozo_permitidos
+        )
         
         qtd_folgas, motivos = calcular_folgas_cadete(st.session_state.cadete_logado, mes_gozo)
         
         if qtd_folgas == 0:
-            st.info(f"Você não tem folgas disponíveis para gozar em {mes_gozo}.")
+            st.info(f"Você não obteve folgas disponíveis para gozar em {mes_gozo}.")
             for m in motivos: st.write(f"- {m}")
         else:
-            st.markdown(f"### 🎉 Você tem direito a **{qtd_folgas}** folga(s) em {mes_gozo}!")
+            st.markdown(f"### 🎉 Você conquistou **{qtd_folgas}** folga(s) para usar em {mes_gozo}!")
             for m in motivos:
                 st.markdown(f"- {m}")
             
@@ -926,7 +944,7 @@ elif menu == "Minhas Folgas":
                 datas_selecionadas = []
                 
                 for i in range(qtd_folgas):
-                    with col_datas[i]:
+                    with col_datas[i % 4]: # Evita quebrar layout se houver mais de 4 folgas
                         try:
                             val_padrao = datetime.strptime(folgas_ja_salvas[i], "%d/%m/%Y").date() if i < len(folgas_ja_salvas) else None
                         except:
@@ -951,7 +969,7 @@ elif menu == "Minhas Folgas":
 # ─────────────────────────────────────────────
 elif menu == "Relatório de Folgas" and is_admin:
     st.title("🖨️ Relatório de Folgas Agendadas")
-    st.info("Aqui você visualiza todas as folgas marcadas pelos cadetes.")
+    st.info("Aqui você visualiza e gerencia todas as folgas marcadas pelos cadetes.")
     
     mes_relatorio = st.selectbox("Selecione o mês de gozo:", meses_disponiveis)
     df_f = buscar_folgas(mes_relatorio)
@@ -1016,6 +1034,23 @@ elif menu == "Relatório de Folgas" and is_admin:
                     file_name=f"folgas_{mes_relatorio}.pdf",
                     mime="application/pdf"
                 )
+
+        # SEÇÃO PARA DELETAR FOLGA
+        st.markdown("---")
+        st.markdown("### 🗑️ Remover Registro de Folga")
+        df_f_del = df_f.copy()
+        df_f_del["selecao"] = df_f_del["nome"] + " (" + df_f_del["turma"] + " - " + df_f_del["pelotao"] + ")"
+        
+        with st.form("form_deletar_folga"):
+            st.warning("Isto fará o cadete perder as datas marcadas e ele precisará agendar novamente.")
+            folga_a_remover = st.selectbox("Selecione o registro para apagar:", df_f_del["selecao"].tolist())
+            
+            if st.form_submit_button("Deletar Registro", type="primary"):
+                id_cad_del = df_f_del[df_f_del["selecao"] == folga_a_remover].iloc[0]["id_cadete"]
+                db.collection("folgas").document(f"{id_cad_del}_{mes_relatorio}").delete()
+                buscar_folgas.clear()
+                st.success(f"Registro de folga de {folga_a_remover.split('(')[0].strip()} removido com sucesso!")
+                st.rerun()
 
 # ─────────────────────────────────────────────
 # 9. LANÇAR DOAÇÃO
@@ -1136,11 +1171,12 @@ elif menu == "Gerenciar Cadetes" and is_admin:
             df_rem = df_rem.copy()
             df_rem["selecao"] = df_rem["nome"] + " (" + df_rem["turma"] + ")"
             with st.form("form_remover"):
+                st.warning("⚠️ Atenção: Remover um cadete apagará TODOS os registros de folga atrelados a ele permanentemente.")
                 cadete_rem = st.selectbox("Cadete a remover:", df_rem["selecao"].tolist())
                 id_rem = df_rem[df_rem["selecao"]==cadete_rem]["id"].values[0]
                 if st.form_submit_button("Remover Definitivamente", type="primary"):
                     deletar_cadete(id_rem)
-                    st.success(f"{cadete_rem.split('(')[0].strip()} removido.")
+                    st.success(f"{cadete_rem.split('(')[0].strip()} removido e suas folgas foram apagadas.")
                     
     with tab3:
         df_senha = buscar_cadetes()
