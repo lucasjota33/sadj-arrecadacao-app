@@ -53,14 +53,7 @@ def buscar_arrecadacoes(mes_ano):
 def salvar_cadete(nome, turma, pelotao):
     """Salva um novo cadete no banco."""
     doc_ref = db.collection("cadetes").document()
-    doc_ref.set(
-        {
-            "nome": nome,
-            "turma": turma,
-            "pelotao": pelotao,
-        }
-    )
-    # Invalida caches afetados
+    doc_ref.set({"nome": nome, "turma": turma, "pelotao": pelotao})
     buscar_cadetes.clear()
 
 
@@ -71,12 +64,10 @@ def deletar_cadete(id_cadete):
 
 
 def salvar_doacao(id_cadete, mes_ano, arroz, feijao, macarrao):
-    """Soma a nova doação de forma atômica via Increment, evitando race conditions
-    quando múltiplos usuários lançam doações ao mesmo tempo."""
+    """Soma a nova doação de forma atômica via Increment."""
     doc_id = f"{id_cadete}_{mes_ano}"
     doc_ref = db.collection("arrecadacoes").document(doc_id)
     total = arroz + feijao + macarrao
-
     doc_ref.set(
         {
             "id_cadete": id_cadete,
@@ -88,11 +79,10 @@ def salvar_doacao(id_cadete, mes_ano, arroz, feijao, macarrao):
         },
         merge=True,
     )
-    # Invalida cache do mês afetado
     buscar_arrecadacoes.clear()
 
 
-# 4. CONTROLE DE ACESSO (AUTENTICAÇÃO)
+# 4. CONTROLE DE ACESSO
 st.sidebar.image("logo.png", use_container_width=True)
 st.sidebar.header("🔑 Área Administrativa")
 senha_input = st.sidebar.text_input("Digite a senha:", type="password")
@@ -106,7 +96,6 @@ if senha_input == SENHA_ADMIN:
 elif senha_input != "":
     st.sidebar.error("Senha Incorreta.")
 
-# Seleção do Mês de Referência (Global para visualização)
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Consulta de Resultados")
 meses_disponiveis = [
@@ -120,13 +109,11 @@ meses_disponiveis = [
 ]
 mes_selecionado = st.sidebar.selectbox("Visualizar dados do mês:", meses_disponiveis)
 
-# Botão manual para forçar atualização dos dados (limpa o cache)
 if st.sidebar.button("🔄 Atualizar dados agora"):
     buscar_cadetes.clear()
     buscar_arrecadacoes.clear()
     st.rerun()
 
-# Navegação do App
 if is_admin:
     menu = st.sidebar.radio(
         "Navegação:", ["Painel de Liderança", "Lançar Doação", "Gerenciar Cadetes"]
@@ -134,129 +121,202 @@ if is_admin:
 else:
     menu = "Painel de Liderança"
 
-# 5. RENDERIZAÇÃO DAS TELAS
 
-# --- TELA 1: PAINEL DE LIDERANÇA ---
+# 5. HELPERS DE DASHBOARD
+def montar_df_principal(mes_ano):
+    """Monta o DataFrame consolidado de cadetes + doações."""
+    df_cadetes = buscar_cadetes()
+    df_doacoes = buscar_arrecadacoes(mes_ano)
+
+    if df_doacoes.empty:
+        df_doacoes = pd.DataFrame(
+            columns=["id_cadete", "kg_arroz", "kg_feijao", "kg_macarrao", "kg_total"]
+        )
+
+    df = pd.merge(df_cadetes, df_doacoes, left_on="id", right_on="id_cadete", how="left")
+
+    colunas_pesos = ["kg_arroz", "kg_feijao", "kg_macarrao", "kg_total"]
+    for col in colunas_pesos:
+        if col not in df.columns:
+            df[col] = 0.0
+    df[colunas_pesos] = df[colunas_pesos].fillna(0.0)
+
+    cumpriu = (
+        (df["kg_total"] >= 7.0)
+        & (df["kg_arroz"] >= 2.0)
+        & (df["kg_feijao"] >= 2.0)
+        & (df["kg_macarrao"] >= 2.0)
+    )
+    df["Meta Individual"] = cumpriu.map({True: "✅ Cumprida", False: "⏳ Pendente"})
+
+    return df
+
+
+def lider_de_grupo(df, coluna_grupo):
+    """Retorna um DataFrame com o cadete de maior kg_total por grupo."""
+    idx = df.groupby(coluna_grupo)["kg_total"].idxmax()
+    return df.loc[idx, [coluna_grupo, "nome", "kg_total", "Meta Individual"]].reset_index(drop=True)
+
+
+# 6. RENDERIZAÇÃO DAS TELAS
+
+# ─────────────────────────────────────────────
+# TELA 1: PAINEL DE LIDERANÇA
+# ─────────────────────────────────────────────
 if menu == "Painel de Liderança":
-    st.title(f"🏆 Arrecadação de alimentos SADJ - {mes_selecionado}")
+    st.title(f"🏆 Arrecadação de alimentos SADJ — {mes_selecionado}")
+    st.caption("Campanha SADJ × ABMDP II · Período: 08 a 25 de junho · Alimentos: Arroz, Feijão e Macarrão")
 
     df_cadetes = buscar_cadetes()
-    df_doacoes = buscar_arrecadacoes(mes_selecionado)
 
     if df_cadetes.empty:
-        st.warning(
-            "Nenhum cadete cadastrado no sistema ainda. Acesse como Admin para cadastrar."
-        )
+        st.warning("Nenhum cadete cadastrado no sistema ainda. Acesse como Admin para cadastrar.")
     else:
-        if df_doacoes.empty:
-            df_doacoes = pd.DataFrame(
-                columns=[
-                    "id_cadete",
-                    "kg_arroz",
-                    "kg_feijao",
-                    "kg_macarrao",
-                    "kg_total",
-                ]
-            )
+        df = montar_df_principal(mes_selecionado)
 
-        df_principal = pd.merge(
-            df_cadetes,
-            df_doacoes,
-            left_on="id",
-            right_on="id_cadete",
-            how="left",
-        )
-
-        # --- CORREÇÃO DO ERRO KeyError ---
-        # Garante que todas as colunas existam, mesmo nos registros antigos do Firebase
-        colunas_pesos = ["kg_arroz", "kg_feijao", "kg_macarrao", "kg_total"]
-        for col in colunas_pesos:
-            if col not in df_principal.columns:
-                df_principal[col] = 0.0
-
-        # Preenche os valores nulos (quem não doou nada ainda) com zero
-        df_principal[colunas_pesos] = df_principal[colunas_pesos].fillna(0.0)
-        # ---------------------------------
-
-        # Meta Individual: Mínimo 7kg no total E 2kg de cada tipo básico (vetorizado)
-        cumpriu = (
-            (df_principal["kg_total"] >= 7.0)
-            & (df_principal["kg_arroz"] >= 2.0)
-            & (df_principal["kg_feijao"] >= 2.0)
-            & (df_principal["kg_macarrao"] >= 2.0)
-        )
-        df_principal["Meta Individual"] = cumpriu.map({True: "Cumprida", False: "Pendente"})
-
-        total_geral_cfo = df_principal["kg_total"].sum()
+        # ── KPIs GERAIS ──────────────────────────────────────────────
+        total_geral = df["kg_total"].sum()
         meta_cfo = 800.0
+        pct = min(total_geral / meta_cfo, 1.0)
+        total_cadetes = len(df)
+        meta_cumprida_count = (df["Meta Individual"] == "✅ Cumprida").sum()
+        participantes = (df["kg_total"] > 0).sum()
 
-        st.subheader("📊 Progresso Meta Geral do CFO (800 kg)")
-        porcentagem_meta = min(total_geral_cfo / meta_cfo, 1.0)
-        st.progress(porcentagem_meta)
+        st.subheader("📊 Visão Geral da Campanha")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Arrecadado", f"{total_geral:.1f} kg", f"meta: {meta_cfo:.0f} kg")
+        c2.metric("Metas Individuais Cumpridas", f"{meta_cumprida_count}", f"de {total_cadetes} cadetes")
+        c3.metric("Cadetes Participantes", f"{participantes}", f"{total_cadetes - participantes} sem doação")
+        c4.metric("Progresso da Meta Geral", f"{pct*100:.1f}%", f"faltam {max(meta_cfo - total_geral, 0):.1f} kg")
 
-        col_meta1, col_meta2 = st.columns(2)
-        col_meta1.metric("Total Arrecadado (CFO)", f"{total_geral_cfo:.2f} kg")
-        if total_geral_cfo >= meta_cfo:
-            col_meta2.success("🎉 META GERAL ATINGIDA! +1 Folga para todo o CFO!")
+        st.progress(pct)
+
+        if total_geral >= meta_cfo:
+            st.success("🎉 META GERAL DO CFO ATINGIDA! +1 Folga Geral para todos os cadetes!")
         else:
-            col_meta2.info(
-                f"Faltam {(meta_cfo - total_geral_cfo):.2f} kg para a folga geral."
-            )
+            faltam = meta_cfo - total_geral
+            st.info(f"Faltam **{faltam:.1f} kg** para a meta de 800 kg e a folga geral.")
 
         st.markdown("---")
-        st.subheader("🔍 Filtrar Rankings")
+
+        # ── MAIOR DOADOR DO CFO ──────────────────────────────────────
+        st.subheader("🥇 Maior Doador do CFO")
+        df_com_doacao = df[df["kg_total"] > 0]
+        if df_com_doacao.empty:
+            st.info("Nenhuma doação registrada ainda.")
+        else:
+            maior_total = df_com_doacao["kg_total"].max()
+            top_cfo = df_com_doacao[df_com_doacao["kg_total"] == maior_total]
+            for _, row in top_cfo.iterrows():
+                st.success(
+                    f"🏅 **{row['nome']}** ({row['turma']} · {row['pelotao']}) "
+                    f"— **{row['kg_total']:.2f} kg** no total  |  "
+                    f"Arroz: {row['kg_arroz']:.1f} kg · Feijão: {row['kg_feijao']:.1f} kg · Macarrão: {row['kg_macarrao']:.1f} kg"
+                )
+
+        st.markdown("---")
+
+        # ── DESTAQUES POR PELOTÃO E POR TURMA ───────────────────────
+        col_pel, col_turma = st.columns(2)
+
+        with col_pel:
+            st.subheader("🎖️ Destaque por Pelotão")
+            st.caption("+1 Folga para o maior arrecadador de cada pelotão")
+            if df_com_doacao.empty:
+                st.info("Nenhuma doação registrada ainda.")
+            else:
+                lideres_pel = lider_de_grupo(df_com_doacao, "pelotao")
+                lideres_pel = lideres_pel.sort_values("pelotao")
+                lideres_pel.columns = ["Pelotão", "Cadete Destaque", "Total (kg)", "Meta Individual"]
+                lideres_pel["Total (kg)"] = lideres_pel["Total (kg)"].map("{:.2f}".format)
+                st.dataframe(lideres_pel, use_container_width=True, hide_index=True)
+
+        with col_turma:
+            st.subheader("🎗️ Destaque por Turma")
+            st.caption("+1 Folga para o maior arrecadador de cada turma")
+            if df_com_doacao.empty:
+                st.info("Nenhuma doação registrada ainda.")
+            else:
+                lideres_turma = lider_de_grupo(df_com_doacao, "turma")
+                lideres_turma = lideres_turma.sort_values("turma")
+                lideres_turma.columns = ["Turma", "Cadete Destaque", "Total (kg)", "Meta Individual"]
+                lideres_turma["Total (kg)"] = lideres_turma["Total (kg)"].map("{:.2f}".format)
+                st.dataframe(lideres_turma, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # ── RANKING COMPLETO ─────────────────────────────────────────
+        st.subheader("📋 Ranking Completo de Cadetes")
+
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            turmas = ["Todas"] + sorted(df_principal["turma"].unique().tolist())
+            turmas = ["Todas"] + sorted(df["turma"].unique().tolist())
             filtro_turma = st.selectbox("Filtrar por Turma:", turmas)
         with col_f2:
-            pelotoes = ["Todos"] + sorted(df_principal["pelotao"].unique().tolist())
+            pelotoes = ["Todos"] + sorted(df["pelotao"].unique().tolist())
             filtro_pelotao = st.selectbox("Filtrar por Pelotão:", pelotoes)
 
-        df_filtrado = df_principal
+        df_filtrado = df.copy()
         if filtro_turma != "Todas":
             df_filtrado = df_filtrado[df_filtrado["turma"] == filtro_turma]
         if filtro_pelotao != "Todos":
             df_filtrado = df_filtrado[df_filtrado["pelotao"] == filtro_pelotao]
 
-        df_filtrado = df_filtrado.sort_values(by="kg_total", ascending=False)
+        df_filtrado = df_filtrado.sort_values("kg_total", ascending=False)
 
         df_exibicao = df_filtrado[
-            [
-                "nome",
-                "turma",
-                "pelotao",
-                "kg_arroz",
-                "kg_feijao",
-                "kg_macarrao",
-                "kg_total",
-                "Meta Individual",
-            ]
-        ]
+            ["nome", "turma", "pelotao", "kg_arroz", "kg_feijao", "kg_macarrao", "kg_total", "Meta Individual"]
+        ].copy()
         df_exibicao.columns = [
-            "Nome do Cadete",
-            "Turma",
-            "Pelotão",
-            "Arroz",
-            "Feijão",
-            "Macarrão",
-            "Total",
-            "Status Meta",
+            "Nome do Cadete", "Turma", "Pelotão", "Arroz (kg)", "Feijão (kg)", "Macarrão (kg)", "Total (kg)", "Status Meta"
         ]
+        for col in ["Arroz (kg)", "Feijão (kg)", "Macarrão (kg)", "Total (kg)"]:
+            df_exibicao[col] = df_exibicao[col].map("{:.2f}".format)
 
         st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
 
         st.markdown("---")
-        st.subheader("⭐ Destaques Atuais da Consulta")
 
-        if not df_filtrado.empty and df_filtrado["kg_total"].max() > 0:
-            maior_peso = df_filtrado["kg_total"].max()
-            destaques = df_filtrado[df_filtrado["kg_total"] == maior_peso]["nome"].tolist()
-            st.success(f"🥇 **Destaque do grupo:** {', '.join(destaques)} com {maior_peso:.2f} kg!")
-        else:
-            st.info("Nenhuma doação registrada para o grupo filtrado.")
+        # ── PROGRESSO POR PELOTÃO ────────────────────────────────────
+        st.subheader("📈 Arrecadação por Pelotão")
+        resumo_pel = (
+            df.groupby("pelotao")
+            .agg(
+                Total=("kg_total", "sum"),
+                Participantes=("kg_total", lambda x: (x > 0).sum()),
+                Cadetes=("nome", "count"),
+                Metas_Cumpridas=("Meta Individual", lambda x: (x == "✅ Cumprida").sum()),
+            )
+            .reset_index()
+            .sort_values("Total", ascending=False)
+        )
+        resumo_pel.columns = ["Pelotão", "Total (kg)", "Participantes", "Cadetes", "Metas Cumpridas"]
+        resumo_pel["Total (kg)"] = resumo_pel["Total (kg)"].map("{:.2f}".format)
+        st.dataframe(resumo_pel, use_container_width=True, hide_index=True)
 
-# --- TELA 2: LANÇAR DOAÇÃO (ADMIN) ---
+        st.markdown("---")
+
+        # ── PROGRESSO POR TURMA ──────────────────────────────────────
+        st.subheader("📈 Arrecadação por Turma")
+        resumo_turma = (
+            df.groupby("turma")
+            .agg(
+                Total=("kg_total", "sum"),
+                Participantes=("kg_total", lambda x: (x > 0).sum()),
+                Cadetes=("nome", "count"),
+                Metas_Cumpridas=("Meta Individual", lambda x: (x == "✅ Cumprida").sum()),
+            )
+            .reset_index()
+            .sort_values("Total", ascending=False)
+        )
+        resumo_turma.columns = ["Turma", "Total (kg)", "Participantes", "Cadetes", "Metas Cumpridas"]
+        resumo_turma["Total (kg)"] = resumo_turma["Total (kg)"].map("{:.2f}".format)
+        st.dataframe(resumo_turma, use_container_width=True, hide_index=True)
+
+
+# ─────────────────────────────────────────────
+# TELA 2: LANÇAR DOAÇÃO (ADMIN)
+# ─────────────────────────────────────────────
 elif menu == "Lançar Doação" and is_admin:
     st.title("📝 Registro de Entrada de Alimentos")
     st.info("💡 A nova pesagem será somada automaticamente ao volume que o cadete já doou neste mês.")
@@ -273,10 +333,7 @@ elif menu == "Lançar Doação" and is_admin:
 
         with st.form("form_registro_alimento"):
             cadete_selecionado = st.selectbox("Selecione o Cadete:", df_cadetes["selecao"].tolist())
-
-            # Seletor de mês independente para o formulário
             mes_doacao = st.selectbox("Mês de Referência da Doação:", meses_disponiveis)
-
             id_cadete = df_cadetes[df_cadetes["selecao"] == cadete_selecionado]["id"].values[0]
 
             col1, col2 = st.columns(2)
@@ -289,7 +346,6 @@ elif menu == "Lançar Doação" and is_admin:
             enviar_doacao = st.form_submit_button("Somar Pesagem")
 
             if enviar_doacao:
-                # Verifica se a soma total lançada não é zero
                 if arroz + feijao + macarrao == 0:
                     st.warning("Insira um valor maior que zero para registrar a doação.")
                 else:
@@ -298,7 +354,10 @@ elif menu == "Lançar Doação" and is_admin:
                         f"Sucesso! Dados adicionados para {cadete_selecionado.split('(')[0].strip()} no mês de {mes_doacao}."
                     )
 
-# --- TELA 3: GERENCIAR CADETES (ADMIN) ---
+
+# ─────────────────────────────────────────────
+# TELA 3: GERENCIAR CADETES (ADMIN)
+# ─────────────────────────────────────────────
 elif menu == "Gerenciar Cadetes" and is_admin:
     st.title("👤 Gerenciamento de Cadetes")
 
