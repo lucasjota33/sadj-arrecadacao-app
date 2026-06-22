@@ -1190,19 +1190,22 @@ elif menu == "Relatório de Folgas" and is_admin:
             folga_a_remover = st.selectbox("Selecione o registro para apagar:", df_f_del["selecao"].tolist())
             confirmacao = st.checkbox("Confirmo que desejo deletar este registro permanentemente")
             
-            if st.form_submit_button("Deletar Registro", type="primary", disabled=not confirmacao):
-                try:
-                    matches = df_f_del[df_f_del["selecao"] == folga_a_remover]
-                    if matches.empty:
-                        st.error("Cadete não encontrado no registro de folgas.")
-                    else:
-                        id_cad_del = matches.iloc[0]["id_cadete"]
-                        db.collection("folgas").document(f"{id_cad_del}_{mes_relatorio}").delete()
-                        buscar_folgas.clear()
-                        st.success(f"Registro de folga de {folga_a_remover.split('(')[0].strip()} removido com sucesso!")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao deletar folga: {str(e)}")
+            if st.form_submit_button("Deletar Registro", type="primary"):
+                if not confirmacao:
+                    st.warning("Você precisa confirmar antes de deletar o registro.")
+                else:
+                    try:
+                        matches = df_f_del[df_f_del["selecao"] == folga_a_remover]
+                        if matches.empty:
+                            st.error("Cadete não encontrado no registro de folgas.")
+                        else:
+                            id_cad_del = matches.iloc[0]["id_cadete"]
+                            db.collection("folgas").document(f"{id_cad_del}_{mes_relatorio}").delete()
+                            buscar_folgas.clear()
+                            st.success(f"Registro de folga de {folga_a_remover.split('(')[0].strip()} removido com sucesso!")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao deletar folga: {str(e)}")
 
 # ─────────────────────────────────────────────
 # 9. LANÇAR DOAÇÃO
@@ -1358,8 +1361,10 @@ elif menu == "Gerenciar Cadetes" and is_admin:
                 id_remocao_docs = df_rem[df_rem["selecao"]==cadete_rem]["id"].values
                 id_rem = id_remocao_docs[0] if len(id_remocao_docs) > 0 else None
                 confirmacao = st.checkbox(f"Confirmo a DELEÇÃO PERMANENTE de {cadete_rem.split('(')[0].strip()}")
-                if st.form_submit_button("Remover Definitivamente", type="primary", disabled=not confirmacao):
-                    if id_rem is None:
+                if st.form_submit_button("Remover Definitivamente", type="primary"):
+                    if not confirmacao:
+                        st.warning("Você precisa confirmar a exclusão antes de prosseguir.")
+                    elif id_rem is None:
                         st.error("Erro: Cadete não encontrado no sistema.")
                     else:
                         try:
