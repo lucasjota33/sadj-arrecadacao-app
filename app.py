@@ -448,7 +448,7 @@ if menu == "Painel de Liderança":
               letter-spacing:1.2px">{mes_selecionado}</span>
     </div>
     <div style="font-size:0.75rem;color:#6b7280;margin-bottom:24px">
-        Arroz · Feijão · Macarrão &nbsp;|&nbsp; Meta Geral: 800 kg &nbsp;|&nbsp; Período: 08 a 25 de junho
+        Arroz · Feijão · Macarrão &nbsp;|&nbsp; Meta Geral: 800 kg &nbsp;|&nbsp
     </div>
     """, unsafe_allow_html=True)
 
