@@ -443,7 +443,7 @@ if menu == "Painel de Liderança":
     # Cabeçalho
     st.markdown(f"""
     <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
-        <span style="font-size:1.5rem;font-weight:800;color:#111827">🏆 Campanha SADJ</span>
+        <span style="font-size:1.5rem;font-weight:800;color:#111827">🏆 Campanha de Doação de Alimentos SADJ</span>
         <span style="font-size:0.8rem;font-weight:500;color:#6b7280;text-transform:uppercase;
               letter-spacing:1.2px">{mes_selecionado}</span>
     </div>
