@@ -937,6 +937,10 @@ elif menu == "Minhas Folgas":
                         st.error("Senha Incorreta!")
     
     else: # Cadete logado
+        if st.session_state.cadete_logado not in df_cadetes["id"].values:
+            st.warning("Seu acesso expirou ou o cadete não existe mais. Faça login novamente.")
+            st.session_state.cadete_logado = None
+            st.rerun()
         cad_logado_row = df_cadetes[df_cadetes["id"] == st.session_state.cadete_logado].iloc[0]
         st.success(f"Logado como: **{cad_logado_row['nome']}**")
         if st.button("Sair (Logout)"):
