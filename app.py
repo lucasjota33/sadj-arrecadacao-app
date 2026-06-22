@@ -4,15 +4,24 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1 import Increment
 import pandas as pd
 from datetime import datetime, timezone
+import base64
+
+try:
+    from fpdf import FPDF
+except ImportError:
+    FPDF = None
 
 # ─────────────────────────────────────────────
-# 1. CONFIGURAÇÃO DA PÁGINA
+# 1. CONFIGURAÇÃO DA PÁGINA & SESSÃO
 # ─────────────────────────────────────────────
 st.set_page_config(
     page_title="Campanha de Arrecadação - SADJ",
     page_icon="logo.png",
     layout="wide",
 )
+
+if "cadete_logado" not in st.session_state:
+    st.session_state.cadete_logado = None
 
 # ─────────────────────────────────────────────
 # CSS — ESTILO PAINEL CLARO
@@ -332,12 +341,25 @@ def buscar_historico(mes_ano):
     for doc in docs: lista.append(doc.to_dict())
     return pd.DataFrame(lista)
 
-def salvar_cadete(nome, turma, pelotao):
-    db.collection("cadetes").document().set({"nome": nome, "turma": turma, "pelotao": pelotao})
+@st.cache_data(ttl=60, show_spinner=False)
+def buscar_folgas(mes_gozo):
+    docs = db.collection("folgas").where("mes_gozo", "==", mes_gozo).stream()
+    lista = []
+    for doc in docs: lista.append(doc.to_dict())
+    return pd.DataFrame(lista)
+
+def salvar_cadete(nome, turma, pelotao, senha=None):
+    doc_data = {"nome": nome, "turma": turma, "pelotao": pelotao}
+    if senha: doc_data["senha"] = senha
+    db.collection("cadetes").document().set(doc_data)
     buscar_cadetes.clear()
 
 def deletar_cadete(id_cadete):
     db.collection("cadetes").document(id_cadete).delete()
+    buscar_cadetes.clear()
+
+def atualizar_senha_cadete(id_cadete, senha):
+    db.collection("cadetes").document(id_cadete).update({"senha": senha})
     buscar_cadetes.clear()
 
 def _registrar_historico(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, tipo):
@@ -371,6 +393,21 @@ def corrigir_doacao(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao):
     _registrar_historico(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, "correção")
     buscar_arrecadacoes.clear()
 
+def salvar_datas_folga(id_cadete, nome_cadete, turma, pelotao, mes_gozo, datas_list):
+    doc_id = f"{id_cadete}_{mes_gozo}"
+    datas_str = [d.strftime("%d/%m/%Y") for d in datas_list if d is not None]
+    db.collection("folgas").document(doc_id).set({
+        "id_cadete": id_cadete,
+        "nome": nome_cadete,
+        "turma": turma,
+        "pelotao": pelotao,
+        "mes_gozo": mes_gozo,
+        "datas": datas_str,
+        "timestamp": datetime.now(timezone.utc)
+    })
+    buscar_folgas.clear()
+
+
 # ─────────────────────────────────────────────
 # 4. SIDEBAR
 # ─────────────────────────────────────────────
@@ -392,14 +429,14 @@ meses_disponiveis = ["Junho 2026","Julho 2026","Agosto 2026","Setembro 2026",
 mes_selecionado = st.sidebar.selectbox("Visualizar dados do mês:", meses_disponiveis)
 
 if st.sidebar.button("🔄 Atualizar agora"):
-    buscar_cadetes.clear(); buscar_arrecadacoes.clear(); buscar_historico.clear()
+    buscar_cadetes.clear(); buscar_arrecadacoes.clear(); buscar_historico.clear(); buscar_folgas.clear()
     st.rerun()
 
 if is_admin:
     menu = st.sidebar.radio("Navegação:",
-        ["Painel de Liderança","Lançar Doação","Corrigir Doação","Histórico","Gerenciar Cadetes"])
+        ["Painel de Liderança", "Minhas Folgas", "Lançar Doação", "Corrigir Doação", "Relatório de Folgas", "Histórico", "Gerenciar Cadetes"])
 else:
-    menu = "Painel de Liderança"
+    menu = st.sidebar.radio("Navegação:", ["Painel de Liderança", "Minhas Folgas"])
 
 # ─────────────────────────────────────────────
 # 5. HELPERS
@@ -418,6 +455,46 @@ def montar_df_principal(mes_ano):
                &(df["kg_feijao"]>=2.0)&(df["kg_macarrao"]>=2.0))
     df["Meta Individual"] = cumpriu.map({True:"✅ Cumprida", False:"⏳ Pendente"})
     return df
+
+def calcular_folgas_cadete(id_cadete, mes_gozo):
+    """Calcula as folgas de um cadete baseando-se no mês anterior ao mes_gozo"""
+    idx = meses_disponiveis.index(mes_gozo)
+    if idx == 0:
+        return 0, ["Nenhuma campanha anterior a este mês."]
+    
+    mes_arrecadacao = meses_disponiveis[idx - 1]
+    df = montar_df_principal(mes_arrecadacao)
+    
+    if df.empty: return 0, ["Sem dados na campanha anterior."]
+    
+    cad = df[df["id"] == id_cadete]
+    if cad.empty: return 0, ["Cadete não encontrado na campanha anterior."]
+    r = cad.iloc[0]
+
+    qtd_folgas = 0
+    motivos = []
+
+    # 1. Meta Individual
+    if r["Meta Individual"] == "✅ Cumprida":
+        qtd_folgas += 1
+        motivos.append("✅ Meta Individual (+1)")
+
+    # 2. Meta Geral
+    if df["kg_total"].sum() > 800:
+        qtd_folgas += 1
+        motivos.append("🎉 Meta Geral do CFO (+1)")
+
+    # 3. Destaques
+    df_com_doacao = df[df["kg_total"] > 0]
+    if r["kg_total"] > 0:
+        if r["kg_total"] == df_com_doacao[df_com_doacao["pelotao"] == r["pelotao"]]["kg_total"].max():
+            qtd_folgas += 1
+            motivos.append("🎖️ Destaque do Pelotão (+1)")
+        if r["kg_total"] == df_com_doacao[df_com_doacao["turma"] == r["turma"]]["kg_total"].max():
+            qtd_folgas += 1
+            motivos.append("🎗️ Destaque da Turma (+1)")
+
+    return qtd_folgas, motivos
 
 def lider_de_grupo(df, col_grupo):
     idx = df.groupby(col_grupo)["kg_total"].idxmax()
@@ -440,7 +517,6 @@ def mini_barra(kg, meta, color):
 # ─────────────────────────────────────────────
 if menu == "Painel de Liderança":
 
-    # Cabeçalho
     st.markdown(f"""
     <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
         <span style="font-size:1.5rem;font-weight:800;color:#111827">🏆 Campanha SADJ</span>
@@ -448,7 +524,7 @@ if menu == "Painel de Liderança":
               letter-spacing:1.2px">{mes_selecionado}</span>
     </div>
     <div style="font-size:0.75rem;color:#6b7280;margin-bottom:24px">
-        Arroz · Feijão · Macarrão &nbsp;|&nbsp; Meta Geral: 800 kg &nbsp
+        Arroz · Feijão · Macarrão &nbsp;|&nbsp; Meta Geral: 800 kg &nbsp;|&nbsp; Período: 08 a 25 de junho
     </div>
     """, unsafe_allow_html=True)
 
@@ -469,7 +545,7 @@ if menu == "Painel de Liderança":
     sem_doacao     = total_cadetes - participantes
     faltam         = max(meta_cfo - total_geral, 0)
 
-    # ── ROW 1: 4 cards KPI ──────────────────────────────────────────
+    # ── ROW 1: 4 cards KPI
     k1, k2, k3, k4 = st.columns(4)
 
     with k1:
@@ -525,11 +601,10 @@ if menu == "Painel de Liderança":
 
     st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-    # ── ROW 2: cards de alimentos ────────────────────────────────────
+    # ── ROW 2: cards de alimentos
     total_arroz   = df["kg_arroz"].sum()
     total_feijao  = df["kg_feijao"].sum()
     total_mac     = df["kg_macarrao"].sum()
-    meta_unit     = meta_cfo / 3  # distribuição proporcional indicativa
 
     st.markdown('<div class="g-section">Composição da Arrecadação</div>', unsafe_allow_html=True)
     f1, f2, f3 = st.columns(3)
@@ -551,7 +626,7 @@ if menu == "Painel de Liderança":
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-    # ── BUSCA INDIVIDUAL ─────────────────────────────────────────────
+    # ── BUSCA INDIVIDUAL
     st.markdown('<div class="g-section">🔎 Consulta de Status Individual</div>', unsafe_allow_html=True)
     busca_nome = st.text_input("", placeholder="Digite o nome ou parte do nome do cadete...", label_visibility="collapsed")
 
@@ -561,7 +636,6 @@ if menu == "Painel de Liderança":
             st.warning("Nenhum cadete encontrado com esse nome.")
         else:
             for _, r in resultado.iterrows():
-                # Destaque de pelotão/turma
                 is_dest_pel = is_dest_turma = False
                 if not df_com_doacao.empty and r["kg_total"] > 0:
                     is_dest_pel   = r["kg_total"] == df_com_doacao[df_com_doacao["pelotao"]==r["pelotao"]]["kg_total"].max()
@@ -620,7 +694,7 @@ if menu == "Painel de Liderança":
                 </div>
                 """, unsafe_allow_html=True)
 
-    # ── MAIOR DOADOR DO CFO ──────────────────────────────────────────
+    # ── MAIOR DOADOR DO CFO
     st.markdown('<div class="g-section">🥇 Maior Doador do CFO</div>', unsafe_allow_html=True)
 
     if df_com_doacao.empty:
@@ -651,7 +725,7 @@ if menu == "Painel de Liderança":
 
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
-    # ── DESTAQUES POR PELOTÃO E TURMA ────────────────────────────────
+    # ── DESTAQUES POR PELOTÃO E TURMA
     col_pel, col_turma = st.columns(2)
 
     with col_pel:
@@ -696,7 +770,7 @@ if menu == "Painel de Liderança":
                 </div>
                 """, unsafe_allow_html=True)
 
-    # ── GRÁFICOS ─────────────────────────────────────────────────────
+    # ── GRÁFICOS
     st.markdown('<div class="g-section">📊 Arrecadação por Grupo</div>', unsafe_allow_html=True)
     gc1, gc2 = st.columns(2)
 
@@ -714,7 +788,7 @@ if menu == "Painel de Liderança":
                       .sort_index())
         st.bar_chart(graf_turma, use_container_width=True)
 
-    # ── RANKING COMPLETO ─────────────────────────────────────────────
+    # ── RANKING COMPLETO
     st.markdown('<div class="g-section">📋 Ranking Completo</div>', unsafe_allow_html=True)
     col_f1, col_f2 = st.columns(2)
     with col_f1:
@@ -737,7 +811,7 @@ if menu == "Painel de Liderança":
         df_exibicao[col] = df_exibicao[col].map("{:.2f}".format)
     st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
 
-    # ── RESUMOS ──────────────────────────────────────────────────────
+    # ── RESUMOS
     st.markdown('<div class="g-section">📈 Resumo por Grupo</div>', unsafe_allow_html=True)
     res1, res2 = st.columns(2)
 
@@ -763,7 +837,188 @@ if menu == "Painel de Liderança":
 
 
 # ─────────────────────────────────────────────
-# 7. LANÇAR DOAÇÃO
+# 7. MINHAS FOLGAS (CADETES)
+# ─────────────────────────────────────────────
+elif menu == "Minhas Folgas":
+    st.title("🏖️ Gerenciador de Folgas")
+    st.caption("Verifique suas metas atingidas e agende os dias de folga no calendário.")
+
+    df_cadetes = buscar_cadetes()
+    
+    if st.session_state.cadete_logado is None:
+        opcoes = ["-- Selecione seu nome --", "➕ SOU NOVO E QUERO ME CADASTRAR"]
+        
+        if not df_cadetes.empty:
+            df_cadetes["selecao"] = df_cadetes["nome"] + " (" + df_cadetes["turma"] + " - " + df_cadetes["pelotao"] + ")"
+            opcoes += df_cadetes.sort_values("nome")["selecao"].tolist()
+
+        escolha = st.selectbox("Quem é você?", opcoes)
+
+        if escolha == "➕ SOU NOVO E QUERO ME CADASTRAR":
+            with st.form("form_novo_cadete"):
+                nome_novo = st.text_input("Nome de Guerra / Nome Completo:").strip()
+                c1, c2 = st.columns(2)
+                with c1: turma_novo = st.selectbox("Turma:", ["1º Ano","2º Ano","3º Ano","4º Ano"])
+                with c2: pelotao_novo = st.selectbox("Pelotão:", ["1º Pel","2º Pel","3º Pel","4º Pel","5º Pel","6º Pel","7º Pel","8º Pel"])
+                senha_nova = st.text_input("Crie uma senha de acesso:", type="password")
+                
+                if st.form_submit_button("Cadastrar e Acessar"):
+                    if not nome_novo or not senha_nova:
+                        st.error("Preencha todos os campos, incluindo a senha.")
+                    else:
+                        salvar_cadete(nome_novo, turma_novo, pelotao_novo, senha_nova)
+                        st.success("Conta criada! Selecione seu nome na lista para fazer login.")
+                        st.rerun()
+
+        elif escolha != "-- Selecione seu nome --":
+            cadete_row = df_cadetes[df_cadetes["selecao"] == escolha].iloc[0]
+            senha_db = cadete_row.get("senha", None)
+
+            if pd.isna(senha_db) or not senha_db:
+                st.warning("Você ainda não tem uma senha cadastrada.")
+                nova_senha = st.text_input("Crie uma senha de acesso agora:", type="password")
+                if st.button("Salvar Senha e Entrar"):
+                    if nova_senha:
+                        atualizar_senha_cadete(cadete_row["id"], nova_senha)
+                        st.session_state.cadete_logado = cadete_row["id"]
+                        st.rerun()
+                    else:
+                        st.error("A senha não pode ser vazia.")
+            else:
+                senha_digitada = st.text_input("Digite sua senha:", type="password")
+                if st.button("Entrar"):
+                    if senha_digitada == senha_db:
+                        st.session_state.cadete_logado = cadete_row["id"]
+                        st.rerun()
+                    else:
+                        st.error("Senha Incorreta!")
+    
+    else: # Cadete logado
+        cad_logado_row = df_cadetes[df_cadetes["id"] == st.session_state.cadete_logado].iloc[0]
+        st.success(f"Logado como: **{cad_logado_row['nome']}**")
+        if st.button("Sair (Logout)"):
+            st.session_state.cadete_logado = None
+            st.rerun()
+        
+        st.markdown("---")
+        mes_gozo = st.selectbox("Mês de gozo das Folgas:", meses_disponiveis, index=1 if len(meses_disponiveis)>1 else 0)
+        
+        qtd_folgas, motivos = calcular_folgas_cadete(st.session_state.cadete_logado, mes_gozo)
+        
+        if qtd_folgas == 0:
+            st.info(f"Você não tem folgas disponíveis para gozar em {mes_gozo}.")
+            for m in motivos: st.write(f"- {m}")
+        else:
+            st.markdown(f"### 🎉 Você tem direito a **{qtd_folgas}** folga(s) em {mes_gozo}!")
+            for m in motivos:
+                st.markdown(f"- {m}")
+            
+            st.markdown("#### Agende suas folgas abaixo:")
+            df_folgas_db = buscar_folgas(mes_gozo)
+            folgas_ja_salvas = []
+            if not df_folgas_db.empty:
+                registro = df_folgas_db[df_folgas_db["id_cadete"] == st.session_state.cadete_logado]
+                if not registro.empty:
+                    folgas_ja_salvas = registro.iloc[0].get("datas", [])
+            
+            with st.form("form_agendar_folgas"):
+                col_datas = st.columns(min(qtd_folgas, 4))
+                datas_selecionadas = []
+                
+                for i in range(qtd_folgas):
+                    with col_datas[i]:
+                        try:
+                            val_padrao = datetime.strptime(folgas_ja_salvas[i], "%d/%m/%Y").date() if i < len(folgas_ja_salvas) else None
+                        except:
+                            val_padrao = None
+                        d = st.date_input(f"Data da Folga {i+1}", value=val_padrao, format="DD/MM/YYYY")
+                        datas_selecionadas.append(d)
+                
+                if st.form_submit_button("Salvar Datas", type="primary"):
+                    salvar_datas_folga(
+                        st.session_state.cadete_logado, 
+                        cad_logado_row['nome'], 
+                        cad_logado_row['turma'], 
+                        cad_logado_row['pelotao'], 
+                        mes_gozo, 
+                        datas_selecionadas
+                    )
+                    st.success("Suas folgas foram agendadas com sucesso!")
+
+
+# ─────────────────────────────────────────────
+# 8. RELATÓRIO DE FOLGAS (ADMIN)
+# ─────────────────────────────────────────────
+elif menu == "Relatório de Folgas" and is_admin:
+    st.title("🖨️ Relatório de Folgas Agendadas")
+    st.info("Aqui você visualiza todas as folgas marcadas pelos cadetes.")
+    
+    mes_relatorio = st.selectbox("Selecione o mês de gozo:", meses_disponiveis)
+    df_f = buscar_folgas(mes_relatorio)
+    
+    if df_f.empty:
+        st.warning("Nenhuma folga agendada para este mês ainda.")
+    else:
+        df_export = df_f[["nome", "turma", "pelotao", "datas"]].copy()
+        df_export.columns = ["Cadete", "Turma", "Pelotão", "Datas Agendadas"]
+        df_export["Datas Agendadas"] = df_export["Datas Agendadas"].apply(lambda x: ", ".join(x) if isinstance(x, list) else x)
+        df_export = df_export.sort_values(by=["Turma", "Pelotão", "Cadete"])
+        
+        st.dataframe(df_export, use_container_width=True, hide_index=True)
+        
+        st.markdown("### Exportar Dados")
+        col_exp1, col_exp2 = st.columns(2)
+        
+        with col_exp1:
+            csv = df_export.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Baixar como CSV (Excel)",
+                data=csv,
+                file_name=f"folgas_{mes_relatorio}.csv",
+                mime="text/csv",
+            )
+            
+        with col_exp2:
+            if FPDF is None:
+                st.error("Para habilitar o PDF, rode 'pip install fpdf' e reinicie o app.")
+            else:
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", 'B', 16)
+                pdf.cell(190, 10, txt=f"Relatorio de Folgas - {mes_relatorio}", ln=True, align='C')
+                pdf.ln(10)
+                
+                pdf.set_font("Arial", 'B', 10)
+                pdf.cell(60, 8, "Cadete", 1)
+                pdf.cell(30, 8, "Turma", 1)
+                pdf.cell(30, 8, "Pelotao", 1)
+                pdf.cell(70, 8, "Datas", 1)
+                pdf.ln()
+                
+                pdf.set_font("Arial", '', 9)
+                for _, row in df_export.iterrows():
+                    # Tratar caracteres especiais para o PDF padrao
+                    nome_str = str(row['Cadete']).encode('latin-1', 'replace').decode('latin-1')
+                    turma_str = str(row['Turma']).encode('latin-1', 'replace').decode('latin-1')
+                    pel_str = str(row['Pelotão']).encode('latin-1', 'replace').decode('latin-1')
+                    dt_str = str(row['Datas Agendadas']).encode('latin-1', 'replace').decode('latin-1')
+                    
+                    pdf.cell(60, 8, nome_str, 1)
+                    pdf.cell(30, 8, turma_str, 1)
+                    pdf.cell(30, 8, pel_str, 1)
+                    pdf.cell(70, 8, dt_str, 1)
+                    pdf.ln()
+                
+                pdf_bytes = pdf.output(dest='S').encode('latin-1')
+                st.download_button(
+                    label="📄 Baixar como PDF",
+                    data=pdf_bytes,
+                    file_name=f"folgas_{mes_relatorio}.pdf",
+                    mime="application/pdf"
+                )
+
+# ─────────────────────────────────────────────
+# 9. LANÇAR DOAÇÃO
 # ─────────────────────────────────────────────
 elif menu == "Lançar Doação" and is_admin:
     st.title("📝 Registro de Entrada de Alimentos")
@@ -793,9 +1048,8 @@ elif menu == "Lançar Doação" and is_admin:
                     salvar_doacao(id_cadete, nome_cadete, mes_doacao, arroz, feijao, macarrao)
                     st.success(f"Pesagem somada para **{nome_cadete}** em {mes_doacao}.")
 
-
 # ─────────────────────────────────────────────
-# 8. CORRIGIR DOAÇÃO
+# 10. CORRIGIR DOAÇÃO
 # ─────────────────────────────────────────────
 elif menu == "Corrigir Doação" and is_admin:
     st.title("✏️ Correção de Doação")
@@ -833,7 +1087,7 @@ elif menu == "Corrigir Doação" and is_admin:
 
 
 # ─────────────────────────────────────────────
-# 9. HISTÓRICO
+# 11. HISTÓRICO
 # ─────────────────────────────────────────────
 elif menu == "Histórico" and is_admin:
     st.title("📜 Histórico de Lançamentos")
@@ -856,11 +1110,12 @@ elif menu == "Histórico" and is_admin:
 
 
 # ─────────────────────────────────────────────
-# 10. GERENCIAR CADETES
+# 12. GERENCIAR CADETES
 # ─────────────────────────────────────────────
 elif menu == "Gerenciar Cadetes" and is_admin:
     st.title("👤 Gerenciamento de Cadetes")
-    tab1, tab2 = st.tabs(["➕ Cadastrar Cadete","❌ Remover Cadete"])
+    tab1, tab2, tab3 = st.tabs(["➕ Cadastrar Cadete", "❌ Remover Cadete", "🔑 Resetar Senha"])
+    
     with tab1:
         with st.form("form_cadastro", clear_on_submit=True):
             nome = st.text_input("Nome de Guerra / Nome Completo:").strip()
@@ -872,6 +1127,7 @@ elif menu == "Gerenciar Cadetes" and is_admin:
                 else:
                     salvar_cadete(nome, turma, pelotao)
                     st.success(f"Cadete '{nome}' cadastrado!")
+                    
     with tab2:
         df_rem = buscar_cadetes()
         if df_rem.empty:
@@ -885,3 +1141,23 @@ elif menu == "Gerenciar Cadetes" and is_admin:
                 if st.form_submit_button("Remover Definitivamente", type="primary"):
                     deletar_cadete(id_rem)
                     st.success(f"{cadete_rem.split('(')[0].strip()} removido.")
+                    
+    with tab3:
+        df_senha = buscar_cadetes()
+        if df_senha.empty:
+            st.info("Não há cadetes cadastrados.")
+        else:
+            df_senha = df_senha.copy()
+            df_senha["selecao"] = df_senha["nome"] + " (" + df_senha["turma"] + " - " + df_senha["pelotao"] + ")"
+            with st.form("form_reset_senha"):
+                st.warning("Ao criar ou resetar a senha, o cadete perderá a senha anterior e precisará usar a nova.")
+                cadete_reset = st.selectbox("Cadete:", df_senha.sort_values("nome")["selecao"].tolist())
+                nova_senha_admin = st.text_input("Definir nova senha para este cadete:", type="password")
+                
+                if st.form_submit_button("Atualizar Senha"):
+                    if nova_senha_admin:
+                        id_reset = df_senha[df_senha["selecao"]==cadete_reset]["id"].values[0]
+                        atualizar_senha_cadete(id_reset, nova_senha_admin)
+                        st.success(f"A senha de {cadete_reset.split('(')[0].strip()} foi atualizada.")
+                    else:
+                        st.error("A nova senha não pode ser vazia.")
