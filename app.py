@@ -952,14 +952,14 @@ elif menu == "Minhas Folgas":
         # Só permite agendar nos meses a partir de Julho (pois Junho foi a doação base)
         meses_gozo_permitidos = meses_disponiveis[1:] 
         mes_gozo = st.selectbox(
-            "Selecione o mês para gozar as folgas (referentes à campanha do mês anterior):", 
+            "Selecione o mês para tirar as folgas (referentes à campanha do mês anterior):", 
             meses_gozo_permitidos
         )
         
         qtd_folgas, motivos = calcular_folgas_cadete(st.session_state.cadete_logado, mes_gozo)
         
         if qtd_folgas == 0:
-            st.info(f"Você não obteve folgas disponíveis para gozar em {mes_gozo}.")
+            st.info(f"Você não obteve folgas disponíveis para tirar em {mes_gozo}.")
             for m in motivos: st.write(f"- {m}")
         else:
             st.markdown(f"### 🎉 Você conquistou **{qtd_folgas}** folga(s) para usar em {mes_gozo}!")
