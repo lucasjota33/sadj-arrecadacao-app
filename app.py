@@ -336,7 +336,7 @@ def buscar_arrecadacoes(mes_ano):
     for doc in docs: lista.append(doc.to_dict())
     return pd.DataFrame(lista)
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def buscar_historico(mes_ano):
     docs = (
         db.collection("historico")
@@ -348,19 +348,24 @@ def buscar_historico(mes_ano):
     for doc in docs: lista.append(doc.to_dict())
     return pd.DataFrame(lista)
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def buscar_folgas(mes_gozo):
     docs = db.collection("folgas").where("mes_gozo", "==", mes_gozo).stream()
     lista = []
     for doc in docs: lista.append(doc.to_dict())
     return pd.DataFrame(lista)
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
+def buscar_todos_status():
+    """Lê TODOS os documentos de meses_status de uma vez (1 leitura de coleção).
+    Evita múltiplas leituras individuais por chamada de buscar_status_mes."""
+    docs = db.collection("meses_status").stream()
+    return {doc.id: doc.to_dict().get("encerrado", False) for doc in docs}
+
 def buscar_status_mes(mes_ano):
-    doc = db.collection("meses_status").document(mes_ano).get()
-    if not doc.exists:
-        return False
-    return doc.to_dict().get("encerrado", False)
+    """Retorna status do mês consultando o cache consolidado — zero leituras extras."""
+    todos = buscar_todos_status()
+    return todos.get(mes_ano, False)
 
 def set_status_mes(mes_ano, encerrado):
     db.collection("meses_status").document(mes_ano).set({
@@ -368,6 +373,7 @@ def set_status_mes(mes_ano, encerrado):
         "encerrado": encerrado,
         "updated_at": datetime.now(timezone.utc),
     }, merge=True)
+    buscar_todos_status.clear()
 
 
 def salvar_cadete(nome, turma, pelotao, senha=None):
@@ -512,6 +518,9 @@ def salvar_datas_folga(id_cadete, nome_cadete, turma, pelotao, mes_gozo, datas_l
         "datas": datas_str,
         "timestamp": datetime.now(timezone.utc)
     })
+    # Atualiza somente o registro deste cadete no session_state local,
+    # sem invalidar o cache global (outros usuários não precisam reler tudo)
+    st.session_state[f"folgas_salvas_{id_cadete}_{mes_gozo}"] = datas_str
     buscar_folgas.clear()
     return True
 
@@ -567,7 +576,7 @@ meses_disponiveis = ["Junho 2026","Julho 2026","Agosto 2026","Setembro 2026",
 mes_selecionado = st.sidebar.selectbox("Visualizar dados do mês:", meses_disponiveis)
 
 if st.sidebar.button("🔄 Atualizar agora"):
-    buscar_cadetes.clear(); buscar_arrecadacoes.clear(); buscar_historico.clear(); buscar_folgas.clear(); buscar_status_mes.clear()
+    buscar_cadetes.clear(); buscar_arrecadacoes.clear(); buscar_historico.clear(); buscar_folgas.clear(); buscar_todos_status.clear()
     st.session_state.df_cadetes_cache = None
     st.rerun()
 
@@ -579,13 +588,13 @@ if is_admin:
             st.success(f"Arrecadação de {mes_status_selecionado} está encerrada.")
             if st.button("🔄 Retomar arrecadação", key="btn_reabrir"):
                 set_status_mes(mes_status_selecionado, False)
-                buscar_status_mes.clear()
+                buscar_todos_status.clear()
                 st.rerun()
         else:
             st.info(f"Arrecadação de {mes_status_selecionado} está aberta.")
             if st.button("✅ Encerrar arrecadação", key="btn_encerrar"):
                 set_status_mes(mes_status_selecionado, True)
-                buscar_status_mes.clear()
+                buscar_todos_status.clear()
                 st.rerun()
 
     menu = st.sidebar.radio("Navegação:",
@@ -612,22 +621,33 @@ def montar_df_principal(mes_ano):
     return df
 
 def calcular_folgas_cadete(id_cadete, mes_gozo):
-    """Calcula as folgas de um cadete baseando-se no mês anterior ao mes_gozo"""
+    """Calcula as folgas de um cadete. Resultado cacheado no session_state
+    para não disparar leituras do Firestore a cada rerun da tela."""
+    cache_key = f"folgas_calc_{id_cadete}_{mes_gozo}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
     try:
         idx = meses_disponiveis.index(mes_gozo)
     except ValueError:
         return 0, ["Mês selecionado inválido."]
-        
+
     if idx == 0:
         return 0, ["Nenhuma campanha anterior a este mês para gerar folgas."]
-    
+
     mes_arrecadacao = meses_disponiveis[idx - 1]
     df = montar_df_principal(mes_arrecadacao)
-    
-    if df.empty: return 0, ["Sem dados na campanha anterior."]
-    
+
+    if df.empty:
+        result = (0, ["Sem dados na campanha anterior."])
+        st.session_state[cache_key] = result
+        return result
+
     cad = df[df["id"] == id_cadete]
-    if cad.empty: return 0, ["Cadete não encontrado na campanha anterior."]
+    if cad.empty:
+        result = (0, ["Cadete não encontrado na campanha anterior."])
+        st.session_state[cache_key] = result
+        return result
     r = cad.iloc[0]
 
     qtd_folgas = 0
@@ -653,7 +673,9 @@ def calcular_folgas_cadete(id_cadete, mes_gozo):
             qtd_folgas += 1
             motivos.append("🎗️ Destaque da Turma (+1)")
 
-    return qtd_folgas, motivos
+    result = (qtd_folgas, motivos)
+    st.session_state[cache_key] = result
+    return result
 
 def lider_de_grupo(df, col_grupo):
     idx = df.groupby(col_grupo)["kg_total"].idxmax()
@@ -1065,8 +1087,24 @@ elif menu == "Minhas Folgas":
             st.session_state.cadete_logado = None
             st.rerun()
         cad_logado_row = df_cadetes[df_cadetes["id"] == st.session_state.cadete_logado].iloc[0]
-        st.success(f"Logado como: **{cad_logado_row['nome']}**")
+
+        col_logout, col_refresh = st.columns([3, 1])
+        with col_logout:
+            st.success(f"Logado como: **{cad_logado_row['nome']}**")
+        with col_refresh:
+            if st.button("🔄 Atualizar", help="Clique se suas folgas parecerem desatualizadas"):
+                keys_to_remove = [k for k in st.session_state if k.startswith("folgas_")]
+                for k in keys_to_remove:
+                    del st.session_state[k]
+                buscar_arrecadacoes.clear()
+                buscar_folgas.clear()
+                st.rerun()
+
         if st.button("Sair (Logout)"):
+            # Limpa todos os caches locais do cadete ao sair
+            keys_to_remove = [k for k in st.session_state if k.startswith("folgas_")]
+            for k in keys_to_remove:
+                del st.session_state[k]
             st.session_state.cadete_logado = None
             st.rerun()
         
@@ -1101,12 +1139,20 @@ elif menu == "Minhas Folgas":
                 primeiro_dia, ultimo_dia = obter_limites_mes(mes_gozo)
                 if primeiro_dia and ultimo_dia:
                     st.info(f"Escolha até {qtd_folgas} data(s) entre {primeiro_dia.strftime('%d/%m/%Y')} e {ultimo_dia.strftime('%d/%m/%Y')}.")
-                df_folgas_db = buscar_folgas(mes_gozo)
-                folgas_ja_salvas = []
-                if not df_folgas_db.empty:
-                    registro = df_folgas_db[df_folgas_db["id_cadete"] == st.session_state.cadete_logado]
-                    if not registro.empty:
-                        folgas_ja_salvas = registro.iloc[0].get("datas", [])
+
+                # Prioriza session_state (gravado localmente após salvar)
+                # para evitar releitura do Firestore imediatamente após o salvamento
+                ss_key = f"folgas_salvas_{st.session_state.cadete_logado}_{mes_gozo}"
+                if ss_key in st.session_state:
+                    folgas_ja_salvas = st.session_state[ss_key]
+                else:
+                    df_folgas_db = buscar_folgas(mes_gozo)
+                    folgas_ja_salvas = []
+                    if not df_folgas_db.empty:
+                        registro = df_folgas_db[df_folgas_db["id_cadete"] == st.session_state.cadete_logado]
+                        if not registro.empty:
+                            folgas_ja_salvas = registro.iloc[0].get("datas", [])
+
                 if folgas_ja_salvas:
                     st.success(
                         f"Você já tem {len(folgas_ja_salvas)} data(s) agendadas: {', '.join(folgas_ja_salvas)}. "
@@ -1295,7 +1341,6 @@ elif menu == "Lançar Doação" and is_admin:
                     st.warning("Insira um valor maior que zero.")
                 else:
                     salvar_doacao(id_cadete, nome_cadete, mes_doacao, arroz, feijao, macarrao)
-                    buscar_arrecadacoes.clear()
                     st.success(f"Pesagem somada para **{nome_cadete}** em {mes_doacao}.")
 
 # ─────────────────────────────────────────────
@@ -1333,7 +1378,6 @@ elif menu == "Corrigir Doação" and is_admin:
                 nf = st.number_input("Feijão (kg):",   min_value=0.0, max_value=200.0, value=vf, step=0.5, format="%.2f", help="Valor TOTAL correto")
             if st.form_submit_button("✅ Confirmar Correção", type="primary"):
                 corrigir_doacao(id_cadete, nome_cadete, mes_corr, na, nf, nm)
-                buscar_arrecadacoes.clear()
                 st.success(f"Correção aplicada. Novo total: {na+nf+nm:.2f} kg.")
 
 
@@ -1389,6 +1433,8 @@ elif menu == "Histórico" and is_admin:
 # ─────────────────────────────────────────────
 elif menu == "Gerenciar Cadetes" and is_admin:
     st.title("👤 Gerenciamento de Cadetes")
+    # Uma única leitura cacheada — compartilhada entre as 3 tabs
+    df_todos_cadetes = buscar_cadetes()
     tab1, tab2, tab3 = st.tabs(["➕ Cadastrar Cadete", "❌ Remover Cadete", "🔑 Resetar Senha"])
     
     with tab1:
@@ -1404,7 +1450,7 @@ elif menu == "Gerenciar Cadetes" and is_admin:
                     st.success(f"Cadete '{nome}' cadastrado!")
                     
     with tab2:
-        df_rem = buscar_cadetes()
+        df_rem = df_todos_cadetes
         if df_rem.empty:
             st.info("Não há cadetes para remover.")
         else:
@@ -1425,11 +1471,15 @@ elif menu == "Gerenciar Cadetes" and is_admin:
                 )
                 confirmacao = st.checkbox(f"Estou ciente e desejo excluir {cadete_rem.split('(')[0].strip()} permanentemente")
                 if id_rem is not None:
-                    doacoes_count = len(list(db.collection("arrecadacoes").where("id_cadete", "==", id_rem).stream()))
-                    folgas_count = len(list(db.collection("folgas").where("id_cadete", "==", id_rem).stream()))
-                    historico_count = len(list(db.collection("historico").where("id_cadete", "==", id_rem).stream()))
+                    # Usa dados já cacheados em vez de queries brutas ao Firestore
+                    _df_arr = buscar_arrecadacoes(mes_selecionado)
+                    _df_folgas = buscar_folgas(mes_selecionado)
+                    doacoes_count = int((_df_arr["id_cadete"] == id_rem).sum()) if not _df_arr.empty else 0
+                    folgas_count = int((_df_folgas["id_cadete"] == id_rem).sum()) if not _df_folgas.empty else 0
                     st.info(
-                        f"Este cadete possui {doacoes_count} doação(ões), {folgas_count} registro(s) de folga e {historico_count} item(ns) no histórico."
+                        f"Este cadete possui ao menos {doacoes_count} doação(ões) e "
+                        f"{folgas_count} registro(s) de folga no mês selecionado. "
+                        "O histórico completo também será removido."
                     )
                 if st.form_submit_button("Remover Definitivamente", type="primary"):
                     if not confirmacao:
@@ -1448,7 +1498,7 @@ elif menu == "Gerenciar Cadetes" and is_admin:
                             st.error(f"Erro ao remover cadete: {str(e)}")
                     
     with tab3:
-        df_senha = buscar_cadetes()
+        df_senha = df_todos_cadetes
         if df_senha.empty:
             st.info("Não há cadetes cadastrados.")
         else:
