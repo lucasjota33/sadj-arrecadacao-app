@@ -460,6 +460,33 @@ def remover_doacao_mes(id_cadete, mes_ano):
     db.collection("arrecadacoes").document(f"{id_cadete}_{mes_ano}").delete()
     buscar_arrecadacoes.clear()
 
+def encontrar_homonimos(df_cadetes, nome):
+    """Retorna os cadetes cujo nome (normalizado) coincide com o nome informado."""
+    def _norm(v):
+        return str(v).strip().lower()
+    nome_norm = _norm(nome)
+    return df_cadetes[df_cadetes["nome"].map(_norm) == nome_norm]
+
+def escolher_cadete_para_importacao(df_homonimos, mes_ano, df_arrecadacoes_mes):
+    """
+    Dado um conjunto de cadetes homônimos, escolhe qual receberá a doação da planilha:
+    - Se apenas um deles possui registro de arrecadação no mês, ele é o 'ativo' real.
+    - Caso contrário (nenhum ou mais de um), aplica-se ao primeiro.
+    Retorna (id_escolhido, ids_a_limpar).
+    """
+    if df_homonimos.empty:
+        return None, []
+    if df_arrecadacoes_mes.empty:
+        ativos = []
+    else:
+        ativos = df_homonimos[df_homonimos["id"].isin(df_arrecadacoes_mes["id_cadete"])]
+    if len(ativos) == 1:
+        id_escolhido = ativos.iloc[0]["id"]
+    else:
+        id_escolhido = df_homonimos.iloc[0]["id"]
+    ids_a_limpar = [cid for cid in df_homonimos["id"].tolist() if cid != id_escolhido]
+    return id_escolhido, ids_a_limpar
+
 def validar_datas_folga(datas_list, mes_gozo):
     """Valida se as datas são válidas e estão dentro do mês selecionado"""
     erros = []
@@ -1462,15 +1489,16 @@ elif menu == "Importar Planilha" and is_admin:
                 st.dataframe(df_preview, use_container_width=True, hide_index=True)
 
                 if (df_casado["kg_outros"] > 0).any():
-                    st.warning(
-                        "⚠️ Há valores na coluna **Outros (kg)** que **não serão importados** — "
-                        "o sistema controla apenas Arroz, Feijão e Macarrão."
+                    st.info(
+                        "📦 A coluna **Outros (kg)** será importada e somada ao total de cada cadete "
+                        "(sem meta mínima)."
                     )
 
                 if qtd_ambiguos > 0:
-                    st.error(
-                        "Existem cadetes cadastrados com nomes duplicados. As linhas correspondentes "
-                        "serão **ignoradas** na importação — resolva manualmente pela tela 'Corrigir Doação'."
+                    st.warning(
+                        "⚠️ Existem cadetes cadastrados com nomes duplicados. Ao importar, a doação "
+                        "será aplicada a **um** dos homônimos e a doação do mês dos demais será zerada "
+                        "(não infla o total)."
                     )
 
                 st.markdown("---")
@@ -1512,6 +1540,7 @@ elif menu == "Importar Planilha" and is_admin:
                     criados = 0
                     ignorados = 0
 
+                    df_arrecadacoes_mes = buscar_arrecadacoes(mes_import)
                     df_casado_idx = df_casado.reset_index(drop=True)
                     for i, row in df_casado_idx.iterrows():
                         id_cadete = row["id_cadete_encontrado"]
@@ -1536,16 +1565,30 @@ elif menu == "Importar Planilha" and is_admin:
                             id_cadete = match_novo.iloc[0]["id"] if not match_novo.empty else None
                             status = "encontrado" if id_cadete is not None else status
 
+                        # ── Nomes duplicados: aplica a UM homônimo e zera o mês dos demais
+                        elif status == "ambiguo":
+                            df_homonimos = encontrar_homonimos(df_cadetes_atual, row["nome"])
+                            ids_a_limpar = []
+                            if not df_homonimos.empty:
+                                id_cadete, ids_a_limpar = escolher_cadete_para_importacao(
+                                    df_homonimos, mes_import, df_arrecadacoes_mes
+                                )
+                            for cid in ids_a_limpar:
+                                remover_doacao_mes(cid, mes_import)
+                            status = "encontrado" if id_cadete is not None else status
+
                         if id_cadete is not None and status == "encontrado":
                             if modo.startswith("Substituir"):
                                 corrigir_doacao(
                                     id_cadete, row["nome"], mes_import,
-                                    row["kg_arroz"], row["kg_feijao"], row["kg_macarrao"]
+                                    row["kg_arroz"], row["kg_feijao"], row["kg_macarrao"],
+                                    row["kg_outros"]
                                 )
                             else:
                                 salvar_doacao(
                                     id_cadete, row["nome"], mes_import,
-                                    row["kg_arroz"], row["kg_feijao"], row["kg_macarrao"]
+                                    row["kg_arroz"], row["kg_feijao"], row["kg_macarrao"],
+                                    row["kg_outros"]
                                 )
                             importados += 1
                         else:
