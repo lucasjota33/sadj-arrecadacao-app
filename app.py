@@ -517,6 +517,86 @@ def salvar_datas_folga(id_cadete, nome_cadete, turma, pelotao, mes_gozo, datas_l
 
 
 # ─────────────────────────────────────────────
+# 3.1 IMPORTAÇÃO DE PLANILHA
+# ─────────────────────────────────────────────
+COLUNAS_PLANILHA_ESPERADAS = {
+    "Companhia": "companhia",
+    "Pelotão": "pelotao_planilha",
+    "Nome": "nome",
+    "Número": "numero",
+    "Arroz (kg)": "kg_arroz",
+    "Feijão (kg)": "kg_feijao",
+    "Macarrão (kg)": "kg_macarrao",
+    "Outros (kg)": "kg_outros",
+    "Total (kg)": "kg_total_planilha",
+}
+
+def ler_planilha_doacoes(arquivo):
+    """
+    Lê a planilha consolidada de doações (.xlsx) no modelo padrão:
+    aba 'Consolidado', com o cabeçalho na 3ª linha e colunas:
+    Companhia, Pelotão, Nome, Número, Arroz (kg), Feijão (kg),
+    Macarrão (kg), Outros (kg), Observações (outros), Total (kg), ...
+    Retorna um DataFrame padronizado com uma linha por cadete.
+    """
+    # header=2 -> a 3ª linha da planilha é o cabeçalho (linhas 1 e 2 são título/branco)
+    df_raw = pd.read_excel(arquivo, sheet_name=0, header=2)
+
+    faltando = [c for c in COLUNAS_PLANILHA_ESPERADAS if c not in df_raw.columns]
+    if faltando:
+        raise ValueError(
+            "Colunas não encontradas na planilha: " + ", ".join(faltando) +
+            ". Verifique se o arquivo segue o modelo padrão (aba 'Consolidado')."
+        )
+
+    df = df_raw.rename(columns=COLUNAS_PLANILHA_ESPERADAS)[list(COLUNAS_PLANILHA_ESPERADAS.values())].copy()
+
+    # Remove linhas totalmente vazias / sem nome
+    df["nome"] = df["nome"].astype(str).str.strip()
+    df = df[(df["nome"] != "") & (df["nome"].str.lower() != "nan")]
+
+    for col in ["kg_arroz", "kg_feijao", "kg_macarrao", "kg_outros", "kg_total_planilha"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    df["companhia"] = df["companhia"].astype(str).str.strip()
+    df["pelotao_planilha"] = df["pelotao_planilha"].astype(str).str.strip()
+
+    return df.reset_index(drop=True)
+
+def casar_planilha_com_cadetes(df_planilha, df_cadetes):
+    """
+    Tenta casar cada linha da planilha com um cadete já cadastrado, comparando
+    o nome (ignorando maiúsculas/minúsculas e espaços). Marca o status de cada
+    linha como 'encontrado', 'ambiguo' (mais de um cadete com o mesmo nome) ou
+    'nao_encontrado'.
+    """
+    if df_cadetes.empty:
+        df_cadetes_norm = pd.DataFrame(columns=["id", "nome", "nome_norm"])
+    else:
+        df_cadetes_norm = df_cadetes.copy()
+        df_cadetes_norm["nome_norm"] = df_cadetes_norm["nome"].astype(str).str.strip().str.lower()
+
+    linhas = []
+    for _, row in df_planilha.iterrows():
+        nome_norm = row["nome"].strip().lower()
+        matches = df_cadetes_norm[df_cadetes_norm["nome_norm"] == nome_norm] if not df_cadetes_norm.empty else df_cadetes_norm
+
+        registro = row.to_dict()
+        if len(matches) == 1:
+            registro["id_cadete_encontrado"] = matches.iloc[0]["id"]
+            registro["status_match"] = "encontrado"
+        elif len(matches) > 1:
+            registro["id_cadete_encontrado"] = None
+            registro["status_match"] = "ambiguo"
+        else:
+            registro["id_cadete_encontrado"] = None
+            registro["status_match"] = "nao_encontrado"
+        linhas.append(registro)
+
+    return pd.DataFrame(linhas)
+
+
+# ─────────────────────────────────────────────
 # 4. SIDEBAR
 # ─────────────────────────────────────────────
 st.sidebar.image("logo.png", use_container_width=True)
@@ -589,7 +669,7 @@ if is_admin:
                 st.rerun()
 
     menu = st.sidebar.radio("Navegação:",
-        ["Painel de Liderança", "Minhas Folgas", "Lançar Doação", "Corrigir Doação", "Relatório de Folgas", "Histórico", "Gerenciar Cadetes"])
+        ["Painel de Liderança", "Minhas Folgas", "Lançar Doação", "Importar Planilha", "Corrigir Doação", "Relatório de Folgas", "Histórico", "Gerenciar Cadetes"])
 else:
     menu = st.sidebar.radio("Navegação:", ["Painel de Liderança", "Minhas Folgas"])
 
@@ -1297,6 +1377,161 @@ elif menu == "Lançar Doação" and is_admin:
                     salvar_doacao(id_cadete, nome_cadete, mes_doacao, arroz, feijao, macarrao)
                     buscar_arrecadacoes.clear()
                     st.success(f"Pesagem somada para **{nome_cadete}** em {mes_doacao}.")
+
+# ─────────────────────────────────────────────
+# 9.1 IMPORTAR PLANILHA (ADMIN)
+# ─────────────────────────────────────────────
+elif menu == "Importar Planilha" and is_admin:
+    st.title("📥 Importar Planilha de Doações")
+    st.info(
+        "Envie a planilha consolidada (.xlsx) no modelo padrão — aba **Consolidado**, "
+        "com as colunas **Companhia, Pelotão, Nome, Número, Arroz (kg), Feijão (kg), "
+        "Macarrão (kg), Outros (kg), Total (kg)**."
+    )
+
+    mes_import = st.selectbox("Mês da doação a ser importada:", meses_disponiveis, key="mes_import")
+
+    arquivo = st.file_uploader("Selecione o arquivo .xlsx", type=["xlsx"])
+
+    if arquivo is not None:
+        try:
+            df_planilha = ler_planilha_doacoes(arquivo)
+        except Exception as e:
+            st.error(f"Erro ao ler a planilha: {e}")
+            df_planilha = None
+
+        if df_planilha is not None:
+            if df_planilha.empty:
+                st.warning("Nenhuma linha de doação válida encontrada na planilha.")
+            else:
+                df_cadetes_atual = buscar_cadetes()
+                df_casado = casar_planilha_com_cadetes(df_planilha, df_cadetes_atual)
+
+                qtd_encontrados = int((df_casado["status_match"] == "encontrado").sum())
+                qtd_nao_encontrados = int((df_casado["status_match"] == "nao_encontrado").sum())
+                qtd_ambiguos = int((df_casado["status_match"] == "ambiguo").sum())
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("✅ Encontrados", qtd_encontrados)
+                c2.metric("❓ Não encontrados", qtd_nao_encontrados)
+                c3.metric("⚠️ Nomes ambíguos", qtd_ambiguos)
+
+                st.markdown("#### Pré-visualização")
+                df_preview = df_casado[[
+                    "nome","companhia","pelotao_planilha","kg_arroz","kg_feijao",
+                    "kg_macarrao","kg_outros","kg_total_planilha","status_match"
+                ]].copy()
+                df_preview.columns = [
+                    "Nome","Companhia","Pelotão","Arroz","Feijão","Macarrão",
+                    "Outros","Total (planilha)","Status"
+                ]
+                df_preview["Status"] = df_preview["Status"].map({
+                    "encontrado": "✅ Encontrado",
+                    "nao_encontrado": "❓ Não encontrado",
+                    "ambiguo": "⚠️ Ambíguo",
+                })
+                st.dataframe(df_preview, use_container_width=True, hide_index=True)
+
+                if (df_casado["kg_outros"] > 0).any():
+                    st.warning(
+                        "⚠️ Há valores na coluna **Outros (kg)** que **não serão importados** — "
+                        "o sistema controla apenas Arroz, Feijão e Macarrão."
+                    )
+
+                if qtd_ambiguos > 0:
+                    st.error(
+                        "Existem cadetes cadastrados com nomes duplicados. As linhas correspondentes "
+                        "serão **ignoradas** na importação — resolva manualmente pela tela 'Corrigir Doação'."
+                    )
+
+                st.markdown("---")
+                st.markdown("#### Modo de importação")
+                modo = st.radio(
+                    "Como aplicar os valores da planilha aos cadetes encontrados?",
+                    [
+                        "Substituir (recomendado — a planilha já traz o total consolidado do mês)",
+                        "Somar ao valor já existente no sistema",
+                    ],
+                )
+
+                cadastrar_novos = False
+                if qtd_nao_encontrados > 0:
+                    st.markdown("#### Cadetes não encontrados no sistema")
+                    st.write(
+                        "Os cadetes abaixo não foram encontrados pelo nome. Você pode cadastrá-los "
+                        "automaticamente (Turma = Companhia da planilha, Pelotão = Pelotão da planilha) "
+                        "ou deixar sem marcar para pular a importação deles."
+                    )
+                    st.dataframe(
+                        df_casado[df_casado["status_match"] == "nao_encontrado"][
+                            ["nome", "companhia", "pelotao_planilha"]
+                        ].rename(columns={
+                            "nome": "Nome", "companhia": "Companhia", "pelotao_planilha": "Pelotão"
+                        }),
+                        use_container_width=True, hide_index=True
+                    )
+                    cadastrar_novos = st.checkbox(
+                        "Cadastrar automaticamente os cadetes não encontrados"
+                    )
+
+                confirmar = st.checkbox(f"Confirmo que desejo importar os dados para **{mes_import}**")
+
+                if st.button("🚀 Importar Dados", type="primary", disabled=not confirmar):
+                    barra = st.progress(0.0, text="Iniciando importação...")
+                    total_linhas = len(df_casado)
+                    importados = 0
+                    criados = 0
+                    ignorados = 0
+
+                    df_casado_idx = df_casado.reset_index(drop=True)
+                    for i, row in df_casado_idx.iterrows():
+                        id_cadete = row["id_cadete_encontrado"]
+                        status = row["status_match"]
+
+                        if status == "nao_encontrado" and cadastrar_novos:
+                            nova_turma = row["companhia"] if pd.notna(row["companhia"]) else ""
+                            novo_pelotao = row["pelotao_planilha"] if pd.notna(row["pelotao_planilha"]) else ""
+                            db.collection("cadetes").document().set({
+                                "nome": row["nome"],
+                                "turma": str(nova_turma),
+                                "pelotao": str(novo_pelotao),
+                            })
+                            criados += 1
+                            buscar_cadetes.clear()
+                            df_cadetes_novo = buscar_cadetes()
+                            match_novo = df_cadetes_novo[
+                                df_cadetes_novo["nome"].astype(str).str.strip().str.lower()
+                                == row["nome"].strip().lower()
+                            ]
+                            id_cadete = match_novo.iloc[0]["id"] if not match_novo.empty else None
+                            status = "encontrado" if id_cadete is not None else status
+
+                        if id_cadete is not None and status == "encontrado":
+                            if modo.startswith("Substituir"):
+                                corrigir_doacao(
+                                    id_cadete, row["nome"], mes_import,
+                                    row["kg_arroz"], row["kg_feijao"], row["kg_macarrao"]
+                                )
+                            else:
+                                salvar_doacao(
+                                    id_cadete, row["nome"], mes_import,
+                                    row["kg_arroz"], row["kg_feijao"], row["kg_macarrao"]
+                                )
+                            importados += 1
+                        else:
+                            ignorados += 1
+
+                        barra.progress((i + 1) / total_linhas, text=f"Processando {i + 1}/{total_linhas}...")
+
+                    barra.empty()
+                    buscar_cadetes.clear()
+                    buscar_arrecadacoes.clear()
+                    buscar_historico.clear()
+                    st.success(
+                        f"Importação concluída! {importados} lançamento(s) aplicado(s), "
+                        f"{criados} cadete(s) novo(s) cadastrado(s), {ignorados} linha(s) ignorada(s)."
+                    )
+                    st.balloons()
 
 # ─────────────────────────────────────────────
 # 10. CORRIGIR DOAÇÃO
