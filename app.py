@@ -244,7 +244,7 @@ h3 { font-size: 0.8rem !important; font-weight: 500 !important;
 }
 .g-status-card .s-foods {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
     gap: 10px;
     margin-bottom: 10px;
 }
@@ -422,35 +422,42 @@ def obter_limites_mes(mes_gozo):
     return primeiro_dia, ultimo_dia
 
 
-def _registrar_historico(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, tipo):
+def _registrar_historico(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, outros, tipo):
     db.collection("historico").document().set({
         "id_cadete": id_cadete, "nome_cadete": nome_cadete, "mes_ano": mes_ano,
-        "kg_arroz": arroz, "kg_feijao": feijao, "kg_macarrao": macarrao,
-        "kg_total": arroz + feijao + macarrao, "tipo": tipo,
+        "kg_arroz": arroz, "kg_feijao": feijao, "kg_macarrao": macarrao, "kg_outros": outros,
+        "kg_total": arroz + feijao + macarrao + outros, "tipo": tipo,
         "timestamp": datetime.now(timezone.utc),
     })
     buscar_historico.clear()
 
-def salvar_doacao(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao):
+def salvar_doacao(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, outros=0.0):
     doc_id = f"{id_cadete}_{mes_ano}"
-    total = arroz + feijao + macarrao
+    total = arroz + feijao + macarrao + outros
     db.collection("arrecadacoes").document(doc_id).set({
         "id_cadete": id_cadete, "mes_ano": mes_ano,
         "kg_arroz": Increment(arroz), "kg_feijao": Increment(feijao),
-        "kg_macarrao": Increment(macarrao), "kg_total": Increment(total),
+        "kg_macarrao": Increment(macarrao), "kg_outros": Increment(outros),
+        "kg_total": Increment(total),
     }, merge=True)
-    _registrar_historico(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, "lançamento")
+    _registrar_historico(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, outros, "lançamento")
     buscar_arrecadacoes.clear()
 
-def corrigir_doacao(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao):
+def corrigir_doacao(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, outros=0.0):
     doc_id = f"{id_cadete}_{mes_ano}"
-    total = arroz + feijao + macarrao
+    total = arroz + feijao + macarrao + outros
     db.collection("arrecadacoes").document(doc_id).set({
         "id_cadete": id_cadete, "mes_ano": mes_ano,
         "kg_arroz": arroz, "kg_feijao": feijao,
-        "kg_macarrao": macarrao, "kg_total": total,
+        "kg_macarrao": macarrao, "kg_outros": outros, "kg_total": total,
     })
-    _registrar_historico(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, "correção")
+    _registrar_historico(id_cadete, nome_cadete, mes_ano, arroz, feijao, macarrao, outros, "correção")
+    buscar_arrecadacoes.clear()
+
+def remover_doacao_mes(id_cadete, mes_ano):
+    """Remove o registro de arrecadação de um cadete para um mês específico (usado para
+    consolidar duplicados antes de reimportar valores da planilha)."""
+    db.collection("arrecadacoes").document(f"{id_cadete}_{mes_ano}").delete()
     buscar_arrecadacoes.clear()
 
 def validar_datas_folga(datas_list, mes_gozo):
@@ -693,12 +700,12 @@ def montar_df_principal(mes_ano):
     df_c = buscar_cadetes()
     df_d = buscar_arrecadacoes(mes_ano)
     if df_d.empty:
-        df_d = pd.DataFrame(columns=["id_cadete","kg_arroz","kg_feijao","kg_macarrao","kg_total"])
+        df_d = pd.DataFrame(columns=["id_cadete","kg_arroz","kg_feijao","kg_macarrao","kg_outros","kg_total"])
     df = pd.merge(df_c, df_d, left_on="id", right_on="id_cadete", how="left")
-    for col in ["kg_arroz","kg_feijao","kg_macarrao","kg_total"]:
+    for col in ["kg_arroz","kg_feijao","kg_macarrao","kg_outros","kg_total"]:
         if col not in df.columns: df[col] = 0.0
-    df[["kg_arroz","kg_feijao","kg_macarrao","kg_total"]] = \
-        df[["kg_arroz","kg_feijao","kg_macarrao","kg_total"]].fillna(0.0)
+    df[["kg_arroz","kg_feijao","kg_macarrao","kg_outros","kg_total"]] = \
+        df[["kg_arroz","kg_feijao","kg_macarrao","kg_outros","kg_total"]].fillna(0.0)
     cumpriu = ((df["kg_total"]>=7.0)&(df["kg_arroz"]>=2.0)
                &(df["kg_feijao"]>=2.0)&(df["kg_macarrao"]>=2.0))
     df["Meta Individual"] = cumpriu.map({True:"✅ Cumprida", False:"⏳ Pendente"})
@@ -857,14 +864,16 @@ if menu == "Painel de Liderança":
     total_arroz   = df["kg_arroz"].sum()
     total_feijao  = df["kg_feijao"].sum()
     total_mac     = df["kg_macarrao"].sum()
+    total_outros  = df["kg_outros"].sum()
 
     st.markdown('<div class="g-section">Composição da Arrecadação</div>', unsafe_allow_html=True)
-    f1, f2, f3 = st.columns(3)
+    f1, f2, f3, f4 = st.columns(4)
 
     for col, label, icon, kg, color in [
         (f1, "Arroz",    "🌾", total_arroz,  "#f59e0b"),
         (f2, "Feijão",   "🫘", total_feijao, "#f97316"),
         (f3, "Macarrão", "🍝", total_mac,    "#8b5cf6"),
+        (f4, "Outros",   "🧺", total_outros, "#0ea5e9"),
     ]:
         with col:
             pct_alimento = (kg / total_geral * 100) if total_geral > 0 else 0
@@ -935,6 +944,12 @@ if menu == "Painel de Liderança":
                             {mini_barra(r['kg_macarrao'], 2.0, "#8b5cf6")}
                             {delta_span(d_mac)}
                         </div>
+                        <div class="g-food-item">
+                            <div class="f-label">🧺 Outros</div>
+                            <div class="f-val">{r['kg_outros']:.1f} kg</div>
+                            <div class="g-mini-bar-wrap"><div class="g-mini-bar" style="width:100%;background:#0ea5e9"></div></div>
+                            <span class="f-delta" style="color:#6b7280">sem meta mínima</span>
+                        </div>
                     </div>
                     <div style="display:flex;align-items:center;gap:12px">
                         <div style="flex:1">
@@ -965,7 +980,7 @@ if menu == "Painel de Liderança":
                         <div style="font-size:1.05rem;font-weight:700;color:#111827">{row['nome']}</div>
                         <div style="font-size:0.75rem;color:#b45309;margin-top:2px">{row['turma']} · {row['pelotao']}</div>
                         <div style="font-size:0.72rem;color:#6b7280;margin-top:4px">
-                            🌾 {row['kg_arroz']:.1f} kg &nbsp;·&nbsp; 🫘 {row['kg_feijao']:.1f} kg &nbsp;·&nbsp; 🍝 {row['kg_macarrao']:.1f} kg
+                            🌾 {row['kg_arroz']:.1f} kg &nbsp;·&nbsp; 🫘 {row['kg_feijao']:.1f} kg &nbsp;·&nbsp; 🍝 {row['kg_macarrao']:.1f} kg &nbsp;·&nbsp; 🧺 {row['kg_outros']:.1f} kg
                         </div>
                     </div>
                     <div style="margin-left:auto;text-align:right">
@@ -1029,15 +1044,15 @@ if menu == "Painel de Liderança":
 
     with gc1:
         st.caption("Por Pelotão")
-        graf_pel = (df.groupby("pelotao")[["kg_arroz","kg_feijao","kg_macarrao"]].sum()
-                    .rename(columns={"kg_arroz":"Arroz","kg_feijao":"Feijão","kg_macarrao":"Macarrão"})
+        graf_pel = (df.groupby("pelotao")[["kg_arroz","kg_feijao","kg_macarrao","kg_outros"]].sum()
+                    .rename(columns={"kg_arroz":"Arroz","kg_feijao":"Feijão","kg_macarrao":"Macarrão","kg_outros":"Outros"})
                     .sort_index())
         st.bar_chart(graf_pel, use_container_width=True)
 
     with gc2:
         st.caption("Por Turma")
-        graf_turma = (df.groupby("turma")[["kg_arroz","kg_feijao","kg_macarrao"]].sum()
-                      .rename(columns={"kg_arroz":"Arroz","kg_feijao":"Feijão","kg_macarrao":"Macarrão"})
+        graf_turma = (df.groupby("turma")[["kg_arroz","kg_feijao","kg_macarrao","kg_outros"]].sum()
+                      .rename(columns={"kg_arroz":"Arroz","kg_feijao":"Feijão","kg_macarrao":"Macarrão","kg_outros":"Outros"})
                       .sort_index())
         st.bar_chart(graf_turma, use_container_width=True)
 
@@ -1058,9 +1073,9 @@ if menu == "Painel de Liderança":
         df_filtrado = df_filtrado[df_filtrado["pelotao"] == filtro_pelotao]
 
     df_filtrado = df_filtrado.sort_values("kg_total", ascending=False)
-    df_exibicao = df_filtrado[["nome","turma","pelotao","kg_arroz","kg_feijao","kg_macarrao","kg_total","Meta Individual"]].copy()
-    df_exibicao.columns = ["Nome do Cadete","Turma","Pelotão","Arroz (kg)","Feijão (kg)","Macarrão (kg)","Total (kg)","Status Meta"]
-    for col in ["Arroz (kg)","Feijão (kg)","Macarrão (kg)","Total (kg)"]:
+    df_exibicao = df_filtrado[["nome","turma","pelotao","kg_arroz","kg_feijao","kg_macarrao","kg_outros","kg_total","Meta Individual"]].copy()
+    df_exibicao.columns = ["Nome do Cadete","Turma","Pelotão","Arroz (kg)","Feijão (kg)","Macarrão (kg)","Outros (kg)","Total (kg)","Status Meta"]
+    for col in ["Arroz (kg)","Feijão (kg)","Macarrão (kg)","Outros (kg)","Total (kg)"]:
         df_exibicao[col] = df_exibicao[col].map("{:.2f}".format)
     st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
 
@@ -1383,11 +1398,12 @@ elif menu == "Lançar Doação" and is_admin:
                 macarrao = st.number_input("Macarrão (kg):", min_value=0.0, max_value=50.0, step=0.5, format="%.2f", help="Mínimo 2 kg para meta")
             with c2:
                 feijao   = st.number_input("Feijão (kg):",   min_value=0.0, max_value=50.0, step=0.5, format="%.2f", help="Mínimo 2 kg para meta")
+                outros   = st.number_input("Outros (kg):",   min_value=0.0, max_value=50.0, step=0.5, format="%.2f", help="Itens extras, sem meta mínima")
             if st.form_submit_button("➕ Somar Pesagem"):
-                if arroz + feijao + macarrao == 0:
+                if arroz + feijao + macarrao + outros == 0:
                     st.warning("Insira um valor maior que zero.")
                 else:
-                    salvar_doacao(id_cadete, nome_cadete, mes_doacao, arroz, feijao, macarrao)
+                    salvar_doacao(id_cadete, nome_cadete, mes_doacao, arroz, feijao, macarrao, outros)
                     buscar_arrecadacoes.clear()
                     st.success(f"Pesagem somada para **{nome_cadete}** em {mes_doacao}.")
 
@@ -1567,11 +1583,11 @@ elif menu == "Corrigir Doação" and is_admin:
         reg         = df_atual[df_atual["id_cadete"]==id_cadete] if not df_atual.empty else pd.DataFrame()
         if not reg.empty:
             r = reg.iloc[0]
-            st.info(f"Valores atuais — Arroz: **{r.get('kg_arroz',0):.2f}** · Feijão: **{r.get('kg_feijao',0):.2f}** · Macarrão: **{r.get('kg_macarrao',0):.2f}** kg")
-            va, vf, vm = float(r.get("kg_arroz",0)), float(r.get("kg_feijao",0)), float(r.get("kg_macarrao",0))
+            st.info(f"Valores atuais — Arroz: **{r.get('kg_arroz',0):.2f}** · Feijão: **{r.get('kg_feijao',0):.2f}** · Macarrão: **{r.get('kg_macarrao',0):.2f}** · Outros: **{r.get('kg_outros',0):.2f}** kg")
+            va, vf, vm, vo = float(r.get("kg_arroz",0)), float(r.get("kg_feijao",0)), float(r.get("kg_macarrao",0)), float(r.get("kg_outros",0))
         else:
             st.info("Nenhum registro encontrado. Será criado um novo.")
-            va = vf = vm = 0.0
+            va = vf = vm = vo = 0.0
         with st.form("form_correcao"):
             st.markdown("**Valores CORRETOS (totais):**")
             c1, c2 = st.columns(2)
@@ -1580,8 +1596,9 @@ elif menu == "Corrigir Doação" and is_admin:
                 nm = st.number_input("Macarrão (kg):", min_value=0.0, max_value=200.0, value=vm, step=0.5, format="%.2f", help="Valor TOTAL correto")
             with c2:
                 nf = st.number_input("Feijão (kg):",   min_value=0.0, max_value=200.0, value=vf, step=0.5, format="%.2f", help="Valor TOTAL correto")
+                no = st.number_input("Outros (kg):",   min_value=0.0, max_value=200.0, value=vo, step=0.5, format="%.2f", help="Valor TOTAL correto (sem meta mínima)")
             if st.form_submit_button("✅ Confirmar Correção", type="primary"):
-                corrigir_doacao(id_cadete, nome_cadete, mes_corr, na, nf, nm)
+                corrigir_doacao(id_cadete, nome_cadete, mes_corr, na, nf, nm, no)
                 buscar_arrecadacoes.clear()
                 st.success(f"Correção aplicada. Novo total: {na+nf+nm:.2f} kg.")
 
